@@ -1,0 +1,982 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Workout Timer</title>
+<meta name="theme-color" content="#0d0f14">
+<meta name="description" content="Rest timer and workout runner: sets, rest countdowns, supersets, drop sets.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Workout Timer">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root {
+    --bg:#0d0f14; --panel:#161922; --panel2:#1d212c; --line:#2a2f3d; --fg:#eef0f5; --dim:#8b91a3; --faint:#5b6173;
+    --work:#4ade80; --work2:#2dd4bf; --rest:#60a5fa; --ready:#fbbf24; --danger:#f43f5e;
+    --r:16px;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif; user-select:none; overflow:hidden; }
+  button { font:inherit; color:inherit; cursor:pointer; }
+  input, select { font:inherit; color:var(--fg); background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:9px 11px; width:100%; outline:none; user-select:text; }
+  input:focus, select:focus { border-color:var(--work); }
+  select option { background:var(--panel2); }
+
+  /* app shell */
+  .screen { display:none; position:absolute; inset:0; flex-direction:column; }
+  .screen.on { display:flex; }
+  .appbar { display:flex; align-items:center; gap:6px; padding:12px 12px 8px; min-height:60px; flex:none; }
+  .appbar h1 { font-size:20px; margin:0 0 0 4px; flex:1; font-weight:650; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .icon-btn { background:none; border:0; color:var(--dim); width:42px; height:42px; border-radius:12px; font-size:20px; line-height:1; display:grid; place-items:center; flex:none; }
+  .icon-btn:hover { background:var(--panel2); color:var(--fg); }
+  .icon-btn svg { width:22px; height:22px; stroke:currentColor; stroke-width:2; fill:none; stroke-linecap:round; }
+  .scroll { flex:1; overflow:auto; padding:4px 18px 24px; }
+  .btn { background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:10px 16px; }
+  .btn:hover { border-color:#3a4152; }
+  .btn.primary { background:linear-gradient(135deg,var(--work),var(--work2)); color:#06240f; border:0; font-weight:650; }
+  .btn.ghost { background:none; border-color:transparent; color:var(--dim); }
+  .btn.ghost:hover { color:var(--fg); }
+  .btn.danger { color:var(--danger); }
+  .muted { color:var(--dim); }
+  .section-title { font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin:22px 2px 10px; }
+  .empty { text-align:center; padding:50px 16px; color:var(--dim); }
+  .empty .big { font-size:40px; margin-bottom:8px; }
+
+  /* drawer */
+  #scrim { position:fixed; inset:0; background:rgba(0,0,0,.55); opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; }
+  #drawer { position:fixed; top:0; bottom:0; left:0; width:min(300px,82vw); background:var(--panel); border-right:1px solid var(--line); transform:translateX(-102%); transition:transform .22s ease; z-index:21; display:flex; flex-direction:column; padding:22px 12px 16px; }
+  body.drawer-open #scrim { opacity:1; pointer-events:auto; }
+  body.drawer-open #drawer { transform:none; }
+  .brand { display:flex; align-items:center; gap:12px; padding:0 8px 18px; border-bottom:1px solid var(--line); margin-bottom:10px; }
+  .brand img { width:46px; height:46px; }
+  .brand b { display:block; font-size:17px; }
+  .brand span { color:var(--dim); font-size:13px; }
+  .nav { display:flex; align-items:center; gap:14px; width:100%; background:none; border:0; text-align:left; padding:12px 12px; border-radius:12px; font-size:15.5px; color:var(--dim); }
+  .nav:hover { background:var(--panel2); color:var(--fg); }
+  .nav.on { background:var(--panel2); color:var(--fg); }
+  .nav.on svg { stroke:var(--work); }
+  .nav svg { width:20px; height:20px; stroke:currentColor; stroke-width:2; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+  .drawer-foot { margin-top:auto; color:var(--faint); font-size:12px; padding:0 12px; }
+
+  /* modal (bottom sheet) */
+  #sheetScrim { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:30; display:none; align-items:flex-end; justify-content:center; }
+  #sheetScrim.on { display:flex; }
+  .sheet { background:var(--panel); border:1px solid var(--line); border-bottom:0; border-radius:22px 22px 0 0; width:min(520px,100%); padding:10px 20px 22px; animation:up .2s ease; }
+  @keyframes up { from { transform:translateY(40px); opacity:0; } }
+  .grab { width:40px; height:5px; border-radius:3px; background:var(--line); margin:0 auto 14px; }
+  .sheet h3 { margin:0 0 14px; font-size:18px; }
+  .picker { display:flex; justify-content:center; align-items:center; gap:10px; margin:6px 0 16px; }
+  .wheel { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .wheel button { background:var(--panel2); border:1px solid var(--line); width:64px; height:36px; border-radius:10px; font-size:18px; }
+  .wheel .val { font-size:52px; font-weight:700; font-variant-numeric:tabular-nums; width:96px; text-align:center; }
+  .wheel small { color:var(--faint); font-size:11px; letter-spacing:.12em; text-transform:uppercase; }
+  .colon { font-size:46px; font-weight:700; color:var(--faint); margin-top:-18px; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+  .chip { background:var(--panel2); border:1px solid var(--line); border-radius:99px; padding:9px 16px; font-weight:600; }
+  .chip.on { border-color:var(--rest); color:var(--rest); background:rgba(96,165,250,.1); }
+  .sheet-actions { display:flex; gap:10px; margin-top:18px; }
+  .sheet-actions .btn { flex:1; padding:12px; }
+  .check { display:flex; align-items:center; gap:10px; color:var(--dim); font-size:14px; margin-top:4px; justify-content:center; }
+  .check input { width:auto; }
+
+  /* timer + runner shared */
+  .stage { flex:1; display:flex; flex-direction:column; align-items:center; overflow:auto; padding-bottom:14px; }
+  .phase { font-size:13px; letter-spacing:.2em; text-transform:uppercase; font-weight:650; color:var(--dim); }
+  .ring-wrap { position:relative; width:min(76vw,340px); aspect-ratio:1; margin:6px 0 4px; flex:none; }
+  .ring-wrap svg { width:100%; height:100%; transform:rotate(-90deg); }
+  .ring-bg { fill:none; stroke:var(--panel2); stroke-width:12; }
+  .ring-fg { fill:none; stroke-width:12; stroke-linecap:round; stroke:var(--faint); transition:stroke .3s; }
+  .ring-text { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+  .clock { font-size:min(21vw,96px); font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-.03em; line-height:1; }
+  .sub { font-size:14px; color:var(--dim); margin-top:6px; }
+  .controls { display:flex; gap:14px; align-items:center; justify-content:center; margin:16px 0 6px; }
+  .round { width:54px; height:54px; border-radius:50%; background:var(--panel2); border:1px solid var(--line); font-size:17px; display:grid; place-items:center; }
+  .main-btn { min-width:180px; height:60px; border-radius:99px; padding:0 28px; font-size:17px; font-weight:700; border:0; background:var(--panel2); }
+  .adjust { display:flex; gap:6px; justify-content:center; min-height:40px; }
+  .keys { font-size:11.5px; color:var(--faint); text-align:center; margin-top:auto; padding-top:10px; }
+
+  /* phones: room for the notch / home bar, and no keyboard hints on touch screens */
+  .appbar { padding-top:max(12px, env(safe-area-inset-top)); }
+  .stage, .scroll { padding-bottom:max(14px, env(safe-area-inset-bottom)); }
+  #drawer { padding-top:max(22px, env(safe-area-inset-top)); }
+  .editor-foot, .sheet { padding-bottom:max(16px, env(safe-area-inset-bottom)); }
+  .fab { bottom:max(22px, calc(env(safe-area-inset-bottom) + 12px)); }
+  @media (hover:none) { .keys, .drawer-foot { display:none; } }
+
+  .p-work .phase, .p-work .clock { color:var(--work); }
+  .p-work .ring-fg { stroke:var(--work); }
+  .p-work .main-btn { background:linear-gradient(135deg,var(--work),var(--work2)); color:#06240f; }
+  .p-rest .phase, .p-rest .clock { color:var(--rest); }
+  .p-rest .ring-fg { stroke:var(--rest); }
+  .p-rest .main-btn { background:var(--rest); color:#071a33; }
+  .p-ready .phase, .p-ready .clock { color:var(--ready); }
+  .p-ready .ring-fg { stroke:var(--ready); }
+  .p-ready .main-btn { background:var(--ready); color:#2b1d00; }
+  .p-idle .main-btn { background:linear-gradient(135deg,var(--work),var(--work2)); color:#06240f; }
+  .paused .clock { opacity:.45; }
+  .flash { animation:flash .9s ease-out 1; }
+  @keyframes flash { 0% { background:rgba(74,222,128,.25); } 100% { background:transparent; } }
+
+  /* quick timer */
+  .setcount { display:flex; align-items:center; gap:10px; margin:2px 0 6px; }
+  .setcount b { font-size:22px; }
+  .stepper { width:34px; height:34px; border-radius:50%; background:var(--panel2); border:1px solid var(--line); font-size:18px; line-height:1; margin:0 6px; }
+  .round.stop { color:var(--danger); }
+  .round.stop:hover { border-color:var(--danger); }
+  #confirmScrim { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40; display:none; align-items:center; justify-content:center; padding:20px; }
+  #confirmScrim.on { display:flex; }
+  .dialog { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:20px; width:min(360px,100%); }
+  .dialog p { margin:0 0 18px; font-size:16px; }
+  .dialog .row2 { display:flex; gap:10px; }
+  .dialog .row2 .btn { flex:1; padding:11px; }
+  .btn.solid-danger { background:var(--danger); color:#fff; border:0; font-weight:650; }
+  .presets { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin:14px 0 2px; }
+  .presets .chip { min-width:70px; }
+  .presets .chip.add { color:var(--dim); border-style:dashed; }
+  .rest-label { font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin-top:14px; }
+
+  /* workouts */
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px; margin-bottom:12px; }
+  .wcard { display:flex; align-items:center; gap:12px; }
+  .wcard .info { flex:1; min-width:0; cursor:pointer; }
+  .wcard .name { font-size:16.5px; font-weight:620; }
+  .wcard .meta { color:var(--dim); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .play { width:46px; height:46px; border-radius:50%; border:0; background:linear-gradient(135deg,var(--work),var(--work2)); color:#06240f; font-size:16px; display:grid; place-items:center; flex:none; }
+  .fab { position:absolute; right:20px; bottom:22px; width:58px; height:58px; border-radius:18px; border:0; background:linear-gradient(135deg,var(--work),var(--work2)); color:#06240f; font-size:28px; box-shadow:0 10px 30px rgba(0,0,0,.45); }
+
+  /* editor */
+  .ex { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px; margin-bottom:12px; }
+  .ex.linked { margin-bottom:0; border-bottom-left-radius:0; border-bottom-right-radius:0; }
+  .ex.linked + .ex { border-top-left-radius:0; border-top-right-radius:0; border-top:1px dashed var(--work2); }
+  .ex-top { display:flex; gap:4px; align-items:center; margin-bottom:10px; }
+  .ex-top .icon-btn { width:34px; height:34px; font-size:15px; }
+  .ex-num { width:26px; height:26px; border-radius:50%; background:var(--panel2); display:grid; place-items:center; font-size:13px; color:var(--dim); flex:none; margin-right:4px; }
+  .ex-top input { font-size:16px; font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .field label { display:block; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); margin-bottom:4px; white-space:nowrap; }
+  .field.wide { grid-column:span 3; }
+  .hint { font-size:12.5px; color:var(--dim); margin-top:8px; }
+  .link-note { font-size:12px; color:var(--work2); margin:8px 0 0; }
+  .editor-foot { display:flex; gap:10px; padding:12px 18px 16px; border-top:1px solid var(--line); }
+  .editor-foot .btn { flex:1; padding:12px; }
+  .total { font-size:13px; color:var(--dim); padding:0 18px 8px; }
+
+  /* runner */
+  .ex-title { font-size:25px; font-weight:700; text-align:center; padding:0 20px; letter-spacing:-.01em; }
+  .badges { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin:8px 16px 2px; }
+  .badge { font-size:12.5px; padding:4px 10px; border-radius:99px; background:var(--panel2); border:1px solid var(--line); color:var(--dim); }
+  .badge.hot { color:var(--work); border-color:#2c5a3d; }
+  .dots { display:flex; gap:6px; justify-content:center; margin:10px 0 2px; }
+  .dots i { width:28px; height:6px; border-radius:3px; background:var(--panel2); }
+  .dots i.done { background:var(--work); }
+  .dots i.cur { background:var(--fg); }
+  #tip { font-size:13px; color:var(--dim); text-align:center; max-width:420px; padding:0 20px; min-height:1.4em; }
+  #next { font-size:14px; color:var(--dim); margin-top:8px; text-align:center; padding:0 20px; }
+  #next b { color:var(--fg); font-weight:600; }
+  .bar { width:calc(100% - 40px); height:4px; background:var(--panel2); border-radius:2px; overflow:hidden; flex:none; margin:0 auto 6px; }
+  .bar div { height:100%; background:var(--faint); width:0; transition:width .3s; }
+
+  /* history + settings */
+  .hist { display:flex; justify-content:space-between; gap:10px; padding:12px 4px; border-bottom:1px solid var(--line); }
+  .hist .when { color:var(--dim); font-size:13px; text-align:right; white-space:nowrap; }
+  .hist .sub2 { color:var(--dim); font-size:13px; }
+  .group { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); overflow:hidden; }
+  .row { display:flex; align-items:center; gap:12px; padding:13px 14px; border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:0; }
+  .row .lbl { flex:1; }
+  .row .lbl small { display:block; color:var(--dim); font-size:12.5px; }
+  .row input:not([type=checkbox]) { width:120px; text-align:right; }
+  .row.stack { flex-wrap:wrap; }
+  .row.stack .lbl { flex-basis:100%; }
+  .row .presets-in { display:flex; gap:8px; width:100%; }
+  .row input.presetIn { flex:1; width:auto; text-align:center; }
+  .p-idle .ring-fg { stroke:var(--work); opacity:.35; }
+  .switch { position:relative; width:46px; height:28px; flex:none; }
+  .switch input { opacity:0; width:100%; height:100%; position:absolute; margin:0; cursor:pointer; z-index:1; }
+  .switch span { position:absolute; inset:0; background:var(--line); border-radius:99px; transition:.2s; }
+  .switch span::after { content:''; position:absolute; left:3px; top:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:.2s; }
+  .switch input:checked + span { background:var(--work); }
+  .switch input:checked + span::after { transform:translateX(18px); }
+  .done-wrap { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px; gap:8px; }
+  .done-wrap h2 { margin:0; font-size:26px; }
+  .stat { display:flex; gap:28px; margin:14px 0 20px; }
+  .stat b { display:block; font-size:24px; }
+  .stat span { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.1em; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="i-hist" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></symbol>
+</svg>
+
+<!-- side menu -->
+<div id="scrim"></div>
+<nav id="drawer">
+  <div class="brand"><img src="icon-256.png" alt=""><div><b>Workout Timer</b><span id="hello">Let's train.</span></div></div>
+  <button class="nav" data-go="timer"><svg><use href="#i-timer"/></svg>Timer</button>
+  <button class="nav" data-go="workouts"><svg><use href="#i-list"/></svg>Workouts</button>
+  <button class="nav" data-go="history"><svg><use href="#i-hist"/></svg>History</button>
+  <button class="nav" data-go="settings"><svg><use href="#i-gear"/></svg>Settings</button>
+  <div class="drawer-foot">Space = set done · 1-3 = rest preset</div>
+</nav>
+
+<!-- TIMER (home) -->
+<section id="timer" class="screen on p-idle">
+  <div class="appbar">
+    <button class="icon-btn menu-btn" title="Menu"><svg><use href="#i-menu"/></svg></button>
+    <h1>Timer</h1>
+    <button class="icon-btn" id="qReset" title="Reset sets (R)"><svg><use href="#i-reset"/></svg></button>
+  </div>
+  <div class="stage">
+    <div class="setcount">
+      <button class="stepper" id="qLess" title="Fewer sets">−</button>
+      <span class="muted">Set</span><b id="qSet">1</b><span class="muted">of</span><b id="qOf">4</b>
+      <button class="stepper" id="qMore" title="More sets">+</button>
+    </div>
+    <div class="ring-wrap">
+      <svg viewBox="0 0 200 200"><circle class="ring-bg" cx="100" cy="100" r="88"/><circle class="ring-fg" cx="100" cy="100" r="88"/></svg>
+      <div class="ring-text"><div class="phase"></div><div class="clock"></div><div class="sub"></div></div>
+    </div>
+    <div class="adjust" id="qAdjust"><button class="btn ghost" data-adj="-15">−15s</button><button class="btn ghost" data-adj="15">+15s</button></div>
+    <div class="controls">
+      <button class="round stop" id="qStop" title="Stop (Esc)">■</button>
+      <button class="main-btn" id="qMain"></button>
+      <span style="width:54px"></span>
+    </div>
+    <div class="rest-label">Rest time</div>
+    <div class="presets" id="presets"></div>
+    <div class="keys">SPACE = set done / skip rest &nbsp;·&nbsp; 1-3 = preset &nbsp;·&nbsp; Esc = stop</div>
+  </div>
+</section>
+
+<!-- WORKOUTS -->
+<section id="workouts" class="screen">
+  <div class="appbar">
+    <button class="icon-btn menu-btn" title="Menu"><svg><use href="#i-menu"/></svg></button>
+    <h1>Workouts</h1>
+  </div>
+  <div class="scroll" id="wlist"></div>
+  <button class="fab" id="newBtn" title="New workout">+</button>
+</section>
+
+<!-- EDITOR -->
+<section id="edit" class="screen">
+  <div class="appbar">
+    <button class="icon-btn" id="editBack" title="Back"><svg><use href="#i-back"/></svg></button>
+    <input id="wname" placeholder="Workout name (e.g. Push day)" style="font-size:17px;font-weight:650">
+  </div>
+  <div class="total" id="wtotal"></div>
+  <div class="scroll">
+    <div id="exlist"></div>
+    <button class="btn" id="addEx" style="width:100%;padding:12px;border-style:dashed">+ Add exercise</button>
+  </div>
+  <div class="editor-foot">
+    <button class="btn danger" id="delW" style="flex:0 0 auto">Delete</button>
+    <button class="btn" id="saveW">Save</button>
+    <button class="btn primary" id="saveStart">Save &amp; start ▶</button>
+  </div>
+</section>
+
+<!-- RUN -->
+<section id="run" class="screen">
+  <div class="appbar">
+    <button class="icon-btn" id="quit" title="End workout (Esc)"><svg><use href="#i-x"/></svg></button>
+    <h1 id="runName" style="text-align:center;font-size:15px;color:var(--dim);font-weight:500"></h1>
+    <div class="muted" id="elapsed" style="font-variant-numeric:tabular-nums;width:42px;text-align:right;margin-right:8px"></div>
+  </div>
+  <div class="stage">
+    <div class="ex-title" id="exTitle"></div>
+    <div class="badges" id="badges"></div>
+    <div class="dots" id="setDots"></div>
+    <div class="ring-wrap">
+      <svg viewBox="0 0 200 200"><circle class="ring-bg" cx="100" cy="100" r="88"/><circle class="ring-fg" cx="100" cy="100" r="88"/></svg>
+      <div class="ring-text"><div class="phase"></div><div class="clock"></div><div class="sub"></div></div>
+    </div>
+    <div id="tip"></div>
+    <div id="next"></div>
+    <div class="controls">
+      <button class="round stop" id="rStop" title="Stop workout (Esc)">■</button>
+      <button class="round" id="prevBtn" title="Back (←)">⏮</button>
+      <button class="main-btn" id="rMain"></button>
+      <button class="round" id="pauseBtn" title="Pause (P)">⏸</button>
+    </div>
+    <div class="adjust" id="rAdjust"><button class="btn ghost" data-adj="-15">−15s</button><button class="btn ghost" data-adj="15">+15s</button></div>
+    <div class="keys">SPACE = done / skip &nbsp;·&nbsp; P = pause &nbsp;·&nbsp; ← = back</div>
+  </div>
+  <div class="bar"><div id="prog"></div></div>
+</section>
+
+<!-- DONE -->
+<section id="done" class="screen">
+  <div class="done-wrap">
+    <div style="font-size:46px">🏁</div>
+    <h2>Workout complete</h2>
+    <div class="muted" id="doneName"></div>
+    <div class="stat" id="doneStats"></div>
+    <button class="btn primary" id="doneBtn" style="padding:12px 30px">Done</button>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section id="history" class="screen">
+  <div class="appbar">
+    <button class="icon-btn menu-btn" title="Menu"><svg><use href="#i-menu"/></svg></button>
+    <h1>History</h1>
+  </div>
+  <div class="scroll" id="hlist"></div>
+</section>
+
+<!-- SETTINGS -->
+<section id="settings" class="screen">
+  <div class="appbar">
+    <button class="icon-btn menu-btn" title="Menu"><svg><use href="#i-menu"/></svg></button>
+    <h1>Settings</h1>
+  </div>
+  <div class="scroll">
+    <div class="section-title">You</div>
+    <div class="group">
+      <div class="row"><div class="lbl">Name</div><input id="sName" placeholder="Your name" style="width:180px"></div>
+    </div>
+    <div class="section-title">Timer</div>
+    <div class="group">
+      <div class="row stack"><div class="lbl">Rest presets<small>The 3 buttons on the Timer screen. Type 90 or 1:30.</small></div>
+        <div class="presets-in"><input class="presetIn" data-p="0"><input class="presetIn" data-p="1"><input class="presetIn" data-p="2"></div></div>
+      <div class="row"><div class="lbl">Get-ready countdown<small>Before a workout starts, in seconds</small></div><input id="sReady" type="number" min="0" max="30" style="width:76px;text-align:center"></div>
+    </div>
+    <div class="section-title">Sound &amp; window</div>
+    <div class="group">
+      <div class="row"><div class="lbl">Sounds</div><label class="switch"><input type="checkbox" id="sSound"><span></span></label></div>
+      <div class="row"><div class="lbl">3-2-1 countdown beeps</div><label class="switch"><input type="checkbox" id="sTicks"><span></span></label></div>
+      <div class="row"><div class="lbl">Volume</div><input type="range" id="sVol" min="5" max="100" style="width:150px;padding:0;accent-color:var(--work)"></div>
+      <div class="row" id="onTopRow"><div class="lbl">Keep window on top<small>Stays visible over other windows</small></div><label class="switch"><input type="checkbox" id="sTop"><span></span></label></div>
+    </div>
+    <div class="section-title">Data</div>
+    <div class="group">
+      <div class="row"><div class="lbl">Saved in<small id="sFolder">this device only (browser storage)</small></div><button class="btn" id="openFolder">Open</button></div>
+      <div class="row"><div class="lbl">Backup<small>Save your workouts to a file, or load them on another device</small></div>
+        <button class="btn" id="backupBtn">Save</button><button class="btn" id="restoreBtn">Load</button></div>
+      <div class="row"><div class="lbl">Clear history</div><button class="btn danger" id="clearHist">Clear</button></div>
+    </div>
+    <div class="muted" style="text-align:center;font-size:12px;margin-top:22px">Workout Timer</div>
+  </div>
+</section>
+
+<!-- in-app confirm (native confirm() pop-ups are unreliable inside the app window) -->
+<div id="confirmScrim">
+  <div class="dialog"><p id="confirmMsg"></p>
+    <div class="row2"><button class="btn" id="confirmNo">Cancel</button><button class="btn solid-danger" id="confirmYes"></button></div>
+  </div>
+</div>
+
+<!-- custom time sheet -->
+<div id="sheetScrim">
+  <div class="sheet">
+    <div class="grab"></div>
+    <h3>Custom rest</h3>
+    <div class="picker">
+      <div class="wheel"><button data-step="m+">▲</button><div class="val" id="pm">1</div><button data-step="m-">▼</button><small>min</small></div>
+      <div class="colon">:</div>
+      <div class="wheel"><button data-step="s+">▲</button><div class="val" id="ps">30</div><button data-step="s-">▼</button><small>sec</small></div>
+    </div>
+    <div class="chips" id="quickChips"></div>
+    <label class="check"><input type="checkbox" id="saveAsPreset"> Replace a preset button with this time</label>
+    <div class="chips" id="replaceWhich" style="margin-top:10px;display:none"></div>
+    <div class="sheet-actions"><button class="btn" id="sheetCancel">Cancel</button><button class="btn primary" id="sheetOk">Use this time</button></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+// Set types: hint shown while working. "link" = runs back-to-back with the next exercise (A1, B1, rest, A2, B2...).
+const TYPES = {
+  'Standard':        { hint: '' },
+  'Drop set':        { hint: 'Last set to failure, drop the weight ~20-30% and keep going. No rest between drops.' },
+  'Superset':        { hint: 'Back-to-back with the next exercise, rest after both.', link: true },
+  'Giant set':       { hint: '3+ exercises back-to-back, rest after the round.', link: true },
+  'Pyramid':         { hint: 'Add weight each set, fewer reps.' },
+  'Reverse pyramid': { hint: 'Heaviest first, then lighter with more reps.' },
+  'Rest-pause':      { hint: 'To failure, rest 10-15s, more reps, repeat.' },
+  'AMRAP':           { hint: 'As many reps as possible.' },
+  'Tempo':           { hint: 'Control the tempo: slow on the way down.' },
+  'Warm-up':         { hint: 'Light weight, get the blood moving.' },
+};
+const DEFAULT_SETTINGS = { name: '', presets: [60, 90, 120], rest: 90, qSets: 4, ready: 5, sound: true, ticks: true, volume: 60, onTop: false };
+
+// ---------- storage (JSON file via the desktop app; localStorage in a browser) ----------
+let state = { workouts: [], history: [], settings: { ...DEFAULT_SETTINGS } };
+const api = () => window.pywebview && window.pywebview.api && window.pywebview.api.save ? window.pywebview.api : null;
+const S = () => state.settings;
+let loaded = false;
+async function loadState() {
+  if (loaded) return; loaded = true;
+  let s = null;
+  if (api()) s = await api().load();
+  else try { s = JSON.parse(localStorage.getItem('wt-state')); } catch {}
+  state = s && s.workouts ? s : { workouts: [sampleWorkout()], history: [] };
+  state.history ||= [];
+  state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
+  if (api()) { if (S().onTop) api().set_on_top(true); api().data_folder().then(f => $('#sFolder').textContent = f); }
+  else { $('#onTopRow').style.display = 'none'; $('#openFolder').style.display = 'none'; }
+  qt.rest = S().rest;
+  renderHello(); renderPresets(); go('timer');
+}
+function persist() {
+  if (api()) api().save(state);
+  else try { localStorage.setItem('wt-state', JSON.stringify(state)); } catch {}
+}
+function sampleWorkout() {
+  return { id: uid(), name: 'Example: Upper body', exercises: [
+    ex({ name: 'Bench press', sets: 4, reps: '8', rest: 90, after: 120 }),
+    ex({ name: 'Incline dumbbell press', type: 'Superset', sets: 3, reps: '10', rest: 60, after: 0 }),
+    ex({ name: 'Cable fly', sets: 3, reps: '12', rest: 60, after: 120 }),
+    ex({ name: 'Plank', sets: 3, reps: 'hold', work: 45, rest: 30, after: 0 }),
+  ]};
+}
+function ex(o = {}) { return { id: uid(), name: '', type: 'Standard', sets: 3, reps: '8', work: 0, rest: 60, after: 120, notes: '', ...o }; }
+
+// ---------- time helpers ----------
+const parseTime = v => {               // "90", "1:30", "2m" -> seconds
+  v = String(v ?? '').trim().toLowerCase(); if (!v) return 0;
+  if (v.includes(':')) { const [m, s] = v.split(':'); return (parseInt(m) || 0) * 60 + (parseInt(s) || 0); }
+  if (v.endsWith('m')) return Math.round(parseFloat(v) * 60) || 0;
+  return parseInt(v) || 0;
+};
+const fmtTime = s => { s = Math.max(0, Math.round(s)); return s >= 60 ? `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}` : `${s}`; };
+const fmtClock = s => { s = Math.max(0, Math.floor(s)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; };
+const fmtLong = s => { s = Math.round(s); const m = Math.floor(s/60); return m ? `${m} min` : `${s}s`; };
+const fmtChip = s => s < 60 ? `${s}s` : s % 60 ? fmtTime(s) : `${s/60} min`;
+const fmtField = s => s ? (s >= 60 ? fmtTime(s) : String(s)) : '';
+
+// ---------- navigation ----------
+const MENU_SCREENS = ['timer', 'workouts', 'history', 'settings'];
+let current = 'timer';
+function go(id) {
+  current = id;
+  $$('.screen').forEach(s => s.classList.toggle('on', s.id === id));
+  $$('.nav').forEach(n => n.classList.toggle('on', n.dataset.go === id));
+  closeDrawer();
+  if (id === 'workouts') renderWorkouts();
+  if (id === 'history') renderHistory();
+  if (id === 'settings') renderSettings();
+}
+const openDrawer = () => document.body.classList.add('drawer-open');
+const closeDrawer = () => document.body.classList.remove('drawer-open');
+$$('.menu-btn').forEach(b => b.onclick = openDrawer);
+$('#scrim').onclick = closeDrawer;
+$$('.nav').forEach(n => n.onclick = () => go(n.dataset.go));
+function renderHello() {
+  const n = S().name.trim(), h = new Date().getHours();
+  $('#hello').textContent = n ? `${h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'}, ${n}` : "Let's train.";
+}
+
+// ---------- shared ring/clock drawing ----------
+const CIRC = 2 * Math.PI * 88;
+$$('.ring-fg').forEach(r => r.style.strokeDasharray = CIRC);
+function draw(screen, { phase, clock, sub, frac }) {
+  const el = $('#' + screen);
+  el.querySelector('.phase').textContent = phase;
+  el.querySelector('.clock').textContent = clock;
+  el.querySelector('.sub').textContent = sub;
+  el.querySelector('.ring-fg').style.strokeDashoffset = CIRC * (1 - Math.max(0, Math.min(1, frac)));
+}
+function setPhase(screen, p, paused) { $('#' + screen).className = `screen${current === screen ? ' on' : ''} p-${p}${paused ? ' paused' : ''}`; }
+function flash(screen) { const el = $('#' + screen + ' .stage'); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+
+// ---------- QUICK TIMER (home) ----------
+// phase: idle (before the first set) -> work (counting up) -> rest (counting down) -> work ...
+const qt = { phase: 'idle', set: 1, rest: 90, end: 0, start: 0, lastBeep: null };
+function renderPresets() {
+  const P = S().presets;
+  $('#presets').innerHTML = P.map((s, i) => `<button class="chip${s === qt.rest ? ' on' : ''}" data-preset="${i}">${fmtChip(s)}</button>`).join('') +
+    `<button class="chip add${P.includes(qt.rest) ? '' : ' on'}" id="customChip">${P.includes(qt.rest) ? 'Custom' : fmtChip(qt.rest)} ⋯</button>`;
+}
+function setQRest(s) {
+  qt.rest = s; S().rest = s; persist(); renderPresets();
+  if (qt.phase === 'rest') { qt.end = qt.restStart + s * 1000; }
+  qDraw();
+}
+$('#presets').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'customChip') openSheet(); else setQRest(S().presets[+b.dataset.preset]);
+});
+const qTotal = () => S().qSets;   // sets per exercise on the quick timer
+function qMain() {
+  unlockAudio();
+  if (qt.phase === 'done') return qStop();                                                          // start over
+  if (qt.phase === 'idle') qt.started = Date.now();
+  if (qt.phase === 'rest') { qt.phase = 'work'; qt.set++; qt.start = Date.now(); flash('timer'); } // skip rest
+  else if (qt.set >= qTotal()) {                                                                    // last set done: stop here
+    qt.phase = 'done'; qt.finished = Date.now(); beep([0, .18, .36, .6], 990, .25); flash('timer');
+  }
+  else { qt.phase = 'rest'; qt.restStart = Date.now(); qt.end = qt.restStart + qt.rest * 1000; qt.lastBeep = null; } // set done
+  qDraw();
+}
+function qStop() { qt.phase = 'idle'; qt.set = 1; qDraw(); }
+function qChangeSets(d) {
+  S().qSets = Math.max(1, Math.min(20, qTotal() + d)); persist();
+  if (qt.set > qTotal()) qt.set = qTotal();
+  qDraw();
+}
+$('#qMain').onclick = qMain;
+$('#qReset').onclick = qStop;
+$('#qStop').onclick = qStop;
+$('#qLess').onclick = () => qChangeSets(-1);
+$('#qMore').onclick = () => qChangeSets(1);
+$('#qAdjust').addEventListener('click', e => {
+  const a = +e.target.dataset.adj; if (!a || qt.phase !== 'rest') return;
+  qt.end = Math.max(Date.now() + 1000, qt.end + a * 1000);
+});
+function qDraw() {
+  const now = Date.now();
+  if (qt.phase === 'rest') {
+    const left = qt.end - now, total = qt.end - qt.restStart;
+    if (left <= 0) {                    // rest over: next set starts
+      qt.phase = 'work'; qt.set++; qt.start = now; beep([0, .22], 990, .3); flash('timer');
+      return qDraw();
+    }
+    const sec = Math.ceil(left / 1000);
+    if (sec <= 3 && qt.lastBeep !== sec) { qt.lastBeep = sec; tick(); }
+    setPhase('timer', 'rest');
+    draw('timer', { phase: 'Rest', clock: fmtTime(sec), sub: qt.set + 1 === qTotal() ? 'next: last set' : `next: set ${qt.set + 1}`, frac: left / total });
+    $('#qMain').textContent = 'Skip rest ⏭';
+  } else if (qt.phase === 'done') {
+    setPhase('timer', 'work');
+    draw('timer', { phase: 'Done', clock: '✓', sub: `${qTotal()} sets · ${fmtLong((qt.finished - qt.started) / 1000)}`, frac: 1 });
+    $('#qMain').textContent = 'Start over ↺';
+  } else {
+    const last = qt.set >= qTotal(), label = last ? 'Last set done ✓' : `Set done · rest ${fmtTime(qt.rest)}`;
+    if (qt.phase === 'work') {
+      setPhase('timer', 'work');
+      draw('timer', { phase: last ? 'Last set' : 'Working', clock: fmtClock((now - qt.start) / 1000), sub: 'tap when the set is done', frac: 1 });
+    } else {
+      setPhase('timer', 'idle');
+      draw('timer', { phase: 'Ready', clock: 'GO', sub: 'tap when the set is done', frac: 1 });
+    }
+    $('#qMain').textContent = label;
+  }
+  $('#qSet').textContent = qt.set;
+  $('#qOf').textContent = qTotal();
+  $('#qAdjust').style.visibility = qt.phase === 'rest' ? 'visible' : 'hidden';
+  $('#qStop').style.visibility = qt.phase === 'idle' ? 'hidden' : 'visible';
+}
+
+// ---------- custom time sheet ----------
+let pick = 90, replaceIdx = null;
+function openSheet() {
+  pick = qt.rest; replaceIdx = null;
+  $('#saveAsPreset').checked = false; $('#replaceWhich').style.display = 'none';
+  $('#quickChips').innerHTML = [45, 75, 150, 180, 240, 300].map(s => `<button class="chip" data-q="${s}">${fmtChip(s)}</button>`).join('');
+  drawPick(); $('#sheetScrim').classList.add('on');
+}
+function drawPick() {
+  $('#pm').textContent = Math.floor(pick / 60);
+  $('#ps').textContent = String(pick % 60).padStart(2, '0');
+  $('#replaceWhich').innerHTML = S().presets.map((s, i) => `<button class="chip${replaceIdx === i ? ' on' : ''}" data-r="${i}">replace ${fmtChip(s)}</button>`).join('');
+}
+const closeSheet = () => $('#sheetScrim').classList.remove('on');
+$('#sheetScrim').addEventListener('click', e => {
+  if (e.target.id === 'sheetScrim') return closeSheet();
+  const st = e.target.dataset.step, q = e.target.dataset.q, r = e.target.dataset.r;
+  if (st) {
+    const d = { 'm+': 60, 'm-': -60, 's+': 5, 's-': -5 }[st];
+    pick = Math.max(5, Math.min(59 * 60 + 55, pick + d)); drawPick();
+  }
+  if (q) { pick = +q; drawPick(); }
+  if (r !== undefined) { replaceIdx = +r; drawPick(); }
+});
+$('#saveAsPreset').onchange = e => { $('#replaceWhich').style.display = e.target.checked ? 'flex' : 'none'; if (e.target.checked && replaceIdx === null) { replaceIdx = 2; drawPick(); } };
+$('#sheetCancel').onclick = closeSheet;
+$('#sheetOk').onclick = () => {
+  if ($('#saveAsPreset').checked && replaceIdx !== null) { S().presets[replaceIdx] = pick; S().presets.sort((a, b) => a - b); }
+  setQRest(pick); closeSheet();
+};
+
+// ---------- WORKOUTS list ----------
+function renderWorkouts() {
+  const W = state.workouts;
+  $('#wlist').innerHTML = W.length ? W.map(w => {
+    const n = w.exercises.length, est = fmtLong(buildSteps(w).reduce((a, s) => a + (s.dur || 40), 0));
+    const names = w.exercises.map(e => e.name || 'Exercise').join(' · ');
+    return `<div class="card wcard">
+      <button class="play" data-start="${w.id}" title="Start">▶</button>
+      <div class="info" data-edit="${w.id}">
+        <div class="name">${esc(w.name || 'Untitled workout')}</div>
+        <div class="meta">${n} exercise${n === 1 ? '' : 's'} · ~${est}</div>
+        <div class="meta">${esc(names)}</div>
+      </div>
+      <button class="icon-btn" data-edit="${w.id}" title="Edit" style="font-size:16px">✎</button>
+      <button class="icon-btn" data-dup="${w.id}" title="Duplicate" style="font-size:16px">⧉</button>
+    </div>`;
+  }).join('') + '<div style="height:70px"></div>'
+    : `<div class="empty"><div class="big">🏋️</div>No workouts yet.<br>Tap <b>+</b> to build one.</div>`;
+}
+$('#wlist').addEventListener('click', e => {
+  const t = e.target.closest('[data-start],[data-edit],[data-dup]'); if (!t) return;
+  if (t.dataset.start) startRun(state.workouts.find(w => w.id === t.dataset.start));
+  else if (t.dataset.edit) openEditor(t.dataset.edit);
+  else if (t.dataset.dup) {
+    const w = structuredClone(state.workouts.find(w => w.id === t.dataset.dup));
+    w.id = uid(); w.name += ' (copy)'; w.exercises.forEach(x => x.id = uid());
+    state.workouts.push(w); persist(); renderWorkouts();
+  }
+});
+$('#newBtn').onclick = () => openEditor(null);
+
+// ---------- EDITOR ----------
+let draft = null;
+function openEditor(id) {
+  const w = state.workouts.find(w => w.id === id);
+  draft = w ? structuredClone(w) : { id: uid(), name: '', exercises: [ex()], isNew: true };
+  $('#wname').value = draft.name;
+  $('#delW').style.display = draft.isNew ? 'none' : '';
+  renderEditor(); go('edit');
+  if (draft.isNew) $('#wname').focus();
+}
+function renderEditor() {
+  const X = draft.exercises;
+  $('#exlist').innerHTML = X.map((e, i) => {
+    const t = TYPES[e.type] || TYPES.Standard, linked = t.link && i < X.length - 1;
+    return `<div class="ex${linked ? ' linked' : ''}" data-i="${i}">
+      <div class="ex-top">
+        <div class="ex-num">${i + 1}</div>
+        <input data-f="name" value="${esc(e.name)}" placeholder="Exercise name">
+        <button class="icon-btn" data-act="up" title="Move up">↑</button>
+        <button class="icon-btn" data-act="down" title="Move down">↓</button>
+        <button class="icon-btn" data-act="copy" title="Duplicate">⧉</button>
+        <button class="icon-btn" data-act="del" title="Remove">✕</button>
+      </div>
+      <div class="grid">
+        <div class="field"><label>Sets</label><input data-f="sets" type="number" min="1" max="20" value="${e.sets}"></div>
+        <div class="field"><label>Reps</label><input data-f="reps" value="${esc(e.reps)}" placeholder="8 / 8-10"></div>
+        <div class="field"><label>Type</label><select data-f="type">${Object.keys(TYPES).map(k => `<option${k === e.type ? ' selected' : ''}>${k}</option>`).join('')}</select></div>
+        <div class="field"><label>Set time</label><input data-f="work" value="${fmtField(e.work)}" placeholder="tap done"></div>
+        <div class="field"><label>Rest / set</label><input data-f="rest" value="${fmtField(e.rest)}" placeholder="0"></div>
+        <div class="field"><label>Rest after</label><input data-f="after" value="${fmtField(e.after)}" placeholder="0"></div>
+        <div class="field wide"><label>Notes</label><input data-f="notes" value="${esc(e.notes)}" placeholder="Weight, cues, machine setting… (optional)"></div>
+      </div>
+      ${linked ? `<div class="link-note">↳ ${esc(e.type.toLowerCase())}: runs back-to-back with #${i + 2}, using this exercise's rest between rounds</div>`
+               : t.hint ? `<div class="hint">${esc(t.hint)}</div>` : ''}
+    </div>`;
+  }).join('');
+  const est = buildSteps(draft).reduce((a, s) => a + (s.dur || 40), 0);
+  $('#wtotal').textContent = `${X.length} exercise${X.length === 1 ? '' : 's'} · ~${fmtLong(est)} · times as 90 or 1:30`;
+}
+$('#exlist').addEventListener('change', e => {
+  const f = e.target.dataset.f; if (!f) return;
+  const i = +e.target.closest('.ex').dataset.i, x = draft.exercises[i];
+  if (f === 'sets') x.sets = Math.max(1, Math.min(20, parseInt(e.target.value) || 1));
+  else if (['work', 'rest', 'after'].includes(f)) x[f] = parseTime(e.target.value);
+  else x[f] = e.target.value;
+  if (['type', 'sets', 'work', 'rest', 'after'].includes(f)) renderEditor();
+});
+$('#exlist').addEventListener('input', e => { if (['name', 'reps', 'notes'].includes(e.target.dataset.f)) draft.exercises[+e.target.closest('.ex').dataset.i][e.target.dataset.f] = e.target.value; });
+$('#exlist').addEventListener('click', e => {
+  const a = e.target.dataset.act; if (!a) return;
+  const X = draft.exercises, i = +e.target.closest('.ex').dataset.i;
+  if (a === 'up' && i > 0) [X[i - 1], X[i]] = [X[i], X[i - 1]];
+  if (a === 'down' && i < X.length - 1) [X[i + 1], X[i]] = [X[i], X[i + 1]];
+  if (a === 'copy') X.splice(i + 1, 0, { ...structuredClone(X[i]), id: uid() });
+  if (a === 'del') X.splice(i, 1);
+  renderEditor();
+});
+$('#addEx').onclick = () => {
+  const last = draft.exercises.at(-1);
+  draft.exercises.push(ex(last ? { sets: last.sets, rest: last.rest, after: last.after } : {}));
+  renderEditor();
+  $$('#exlist [data-f="name"]').at(-1).focus();
+};
+$('#wname').oninput = e => draft.name = e.target.value;
+function commitDraft() {
+  document.activeElement?.blur?.();                 // flush the field being typed in
+  draft.exercises = draft.exercises.filter(x => x.name.trim() || draft.exercises.length === 1);
+  const { isNew, ...w } = draft; w.name = w.name.trim() || 'Untitled workout';
+  const i = state.workouts.findIndex(x => x.id === w.id);
+  if (i >= 0) state.workouts[i] = w; else state.workouts.push(w);
+  persist(); return w;
+}
+$('#saveW').onclick = () => { commitDraft(); go('workouts'); };
+$('#saveStart').onclick = () => startRun(commitDraft());
+$('#editBack').onclick = () => go('workouts');
+$('#delW').onclick = () => {
+  ask(`Delete "${draft.name || 'this workout'}"?`, 'Delete', () => {
+    state.workouts = state.workouts.filter(w => w.id !== draft.id); persist(); go('workouts');
+  });
+};
+
+// ---------- building a workout's timeline ----------
+// Groups consecutive exercises joined by Superset/Giant set, then walks round by round.
+function buildSteps(w) {
+  const X = w.exercises.filter(x => x.name.trim() || w.exercises.length === 1);
+  const groups = []; let g = [];
+  X.forEach((x, i) => { g.push(x); if (!(TYPES[x.type]?.link && i < X.length - 1)) { groups.push(g); g = []; } });
+  const steps = S().ready ? [{ kind: 'ready', dur: S().ready }] : [];
+  groups.forEach((grp, gi) => {
+    const rounds = Math.max(...grp.map(x => x.sets));
+    for (let r = 1; r <= rounds; r++) {
+      grp.filter(x => x.sets >= r).forEach(x => steps.push({ kind: 'work', ex: x, set: r, of: x.sets, dur: x.work || 0 }));
+      if (r < rounds) steps.push({ kind: 'rest', dur: grp[0].rest || 0 });
+    }
+    const after = grp.at(-1).after || 0;
+    if (gi < groups.length - 1 && after) steps.push({ kind: 'rest', dur: after, between: true });
+  });
+  return steps.filter(s => s.kind !== 'rest' || s.dur > 0);
+}
+
+// ---------- RUN (guided workout) ----------
+let run = null;
+function startRun(w) {
+  if (!w || !w.exercises.length) return;
+  run = { w, steps: buildSteps(w), i: 0, started: Date.now(), paused: false };
+  go('run'); $('#runName').textContent = w.name;
+  unlockAudio(); enterStep(0);
+}
+function enterStep(i) {
+  run.i = i;
+  const s = run.steps[i];
+  if (!s) return finish();
+  run.stepStart = Date.now(); run.lastBeep = null;
+  run.end = s.dur ? Date.now() + s.dur * 1000 : 0;
+  if (run.paused) { run.pausedLeft = s.dur * 1000; run.pausedElapsed = 0; }
+  if (s.kind === 'work') { flash('run'); if (i > 0) beep([0, .22], 990, .3); }
+  renderRun();
+}
+const nextStep = () => enterStep(run.i + 1);
+function prevStep() { enterStep((Date.now() - run.stepStart) > 2500 ? run.i : Math.max(0, run.i - 1)); }
+function togglePause() {
+  if (!run.paused) { run.paused = true; run.pausedLeft = run.end ? run.end - Date.now() : 0; run.pausedElapsed = Date.now() - run.stepStart; }
+  else { run.paused = false; if (run.end) run.end = Date.now() + run.pausedLeft; run.stepStart = Date.now() - (run.pausedElapsed || 0); }
+  $('#pauseBtn').textContent = run.paused ? '▶' : '⏸';
+  renderRun();
+}
+function exitRun() { run = null; go('workouts'); }
+function finish() {
+  const secs = (Date.now() - run.started) / 1000, sets = run.steps.filter(s => s.kind === 'work').length;
+  state.history.push({ name: run.w.name, t: Date.now(), secs, sets }); persist();
+  beep([0, .18, .36, .6], 990, .25);
+  $('#doneName').textContent = run.w.name;
+  $('#doneStats').innerHTML = `<div><b>${fmtLong(secs)}</b><span>time</span></div><div><b>${sets}</b><span>sets</span></div><div><b>${new Set(run.w.exercises.map(x => x.name)).size}</b><span>exercises</span></div>`;
+  run = null; go('done');
+}
+$('#doneBtn').onclick = () => go('workouts');
+$('#rMain').onclick = () => nextStep();
+$('#prevBtn').onclick = prevStep;
+$('#pauseBtn').onclick = togglePause;
+function stopRun() {
+  const wasPaused = run.paused; if (!wasPaused) togglePause();   // freeze the clock while deciding
+  ask('Stop this workout?', 'Stop', exitRun, () => { if (run && !wasPaused) togglePause(); });
+}
+$('#quit').onclick = stopRun;
+$('#rStop').onclick = stopRun;
+
+// ---------- in-app confirm ----------
+let askYes = null, askNo = null;
+function ask(msg, yesLabel, onYes, onNo) {
+  $('#confirmMsg').textContent = msg; $('#confirmYes').textContent = yesLabel;
+  askYes = onYes; askNo = onNo; $('#confirmScrim').classList.add('on');
+}
+function closeAsk(yes) {
+  $('#confirmScrim').classList.remove('on');
+  const f = yes ? askYes : askNo; askYes = askNo = null; f?.();
+}
+$('#confirmYes').onclick = () => closeAsk(true);
+$('#confirmNo').onclick = () => closeAsk(false);
+$('#confirmScrim').onclick = e => { if (e.target.id === 'confirmScrim') closeAsk(false); };
+$('#rAdjust').addEventListener('click', e => {
+  const a = +e.target.dataset.adj, s = run && run.steps[run.i]; if (!a || !s || !s.dur) return;
+  if (run.paused) run.pausedLeft = Math.max(1000, run.pausedLeft + a * 1000);
+  else run.end = Math.max(Date.now() + 1000, run.end + a * 1000);
+  s.dur = Math.max(1, s.dur + a);
+});
+
+const nextWorkAfter = i => run.steps.slice(i + 1).find(s => s.kind === 'work') || null;
+const describe = s => s ? `<b>${esc(s.ex.name || 'Exercise')}</b> · set ${s.set} of ${s.of}${s.ex.reps ? ` · ${esc(s.ex.reps)} reps` : ''}` : '<b>Finish</b>';
+function renderRun() {
+  const s = run.steps[run.i], focus = s.kind === 'work' ? s : nextWorkAfter(run.i);
+  if (focus) {
+    const x = focus.ex;
+    $('#exTitle').textContent = x.name || 'Exercise';
+    $('#badges').innerHTML = [
+      `<span class="badge hot">Set ${focus.set} / ${focus.of}</span>`,
+      x.reps ? `<span class="badge">${esc(x.reps)} reps</span>` : '',
+      x.type !== 'Standard' ? `<span class="badge">${esc(x.type)}</span>` : '',
+      x.notes ? `<span class="badge">${esc(x.notes)}</span>` : '',
+    ].join('');
+    $('#setDots').innerHTML = Array.from({ length: focus.of }, (_, k) => `<i class="${k + 1 < focus.set ? 'done' : k + 1 === focus.set ? 'cur' : ''}"></i>`).join('');
+    $('#tip').textContent = s.kind === 'work' ? (TYPES[x.type]?.hint || '') : '';
+  }
+  $('#rMain').textContent = s.kind === 'work' ? (s.dur ? 'Skip ⏭' : 'Set done ✓') : s.kind === 'rest' ? 'Skip rest ⏭' : 'Start now';
+  $('#rAdjust').style.visibility = s.dur && s.kind !== 'ready' ? 'visible' : 'hidden';
+  const after = nextWorkAfter(run.i);
+  $('#next').innerHTML = `${s.kind === 'work' ? 'Next' : s.kind === 'rest' ? 'Up next' : 'First'}: ${describe(after)}`;
+  const nWork = run.steps.filter(x => x.kind === 'work').length, doneWork = run.steps.slice(0, run.i).filter(x => x.kind === 'work').length;
+  $('#prog').style.width = (doneWork / nWork * 100) + '%';
+}
+function runDraw() {
+  const s = run.steps[run.i], now = Date.now();
+  const label = { ready: 'Get ready', work: s.dur ? 'Work' : 'Go', rest: s.between ? 'Rest · next exercise' : 'Rest' }[s.kind];
+  setPhase('run', s.kind, run.paused);
+  if (s.dur) {
+    const left = run.paused ? run.pausedLeft : run.end - now, sec = Math.ceil(left / 1000);
+    draw('run', { phase: run.paused ? 'Paused' : label, clock: fmtTime(sec), sub: s.kind === 'ready' ? '' : `of ${fmtTime(s.dur)}`, frac: left / (s.dur * 1000) });
+    if (!run.paused) {
+      if (sec <= 3 && sec >= 1 && run.lastBeep !== sec) { run.lastBeep = sec; tick(); }
+      if (left <= 0) { if (s.kind === 'work') beep([0], 520, .45); nextStep(); return; }
+    }
+  } else {
+    const el = run.paused ? run.pausedElapsed : now - run.stepStart;
+    draw('run', { phase: run.paused ? 'Paused' : label, clock: fmtClock(el / 1000), sub: 'tap when done', frac: 1 });
+  }
+  $('#elapsed').textContent = fmtClock((now - run.started) / 1000);
+}
+
+// One clock for both timers. setInterval (not requestAnimationFrame) so rests still end and beep
+// while the window is minimized or behind other windows. The quick timer keeps running while you browse menus.
+setInterval(() => {
+  if (run) runDraw();
+  if (qt.phase === 'rest' || current === 'timer') qDraw();
+}, 100);
+
+// ---------- HISTORY ----------
+function renderHistory() {
+  const H = state.history.slice().reverse();
+  $('#hlist').innerHTML = H.length ? H.map(h => `<div class="hist"><div><div>${esc(h.name)}</div><div class="sub2">${h.sets} sets · ${fmtLong(h.secs)}</div></div>
+    <div class="when">${new Date(h.t).toLocaleDateString([], { weekday:'short', month:'short', day:'numeric' })}<br>${new Date(h.t).toLocaleTimeString([], { hour:'numeric', minute:'2-digit' })}</div></div>`).join('')
+    : `<div class="empty"><div class="big">📅</div>Finished workouts show up here.</div>`;
+}
+
+// ---------- SETTINGS ----------
+function renderSettings() {
+  const s = S();
+  $('#sName').value = s.name;
+  $$('.presetIn').forEach(i => i.value = fmtTime(s.presets[+i.dataset.p]));
+  $('#sReady').value = s.ready; $('#sSound').checked = s.sound; $('#sTicks').checked = s.ticks;
+  $('#sVol').value = s.volume; $('#sTop').checked = s.onTop;
+}
+$('#sName').oninput = e => { S().name = e.target.value; renderHello(); persist(); };
+$$('.presetIn').forEach(i => i.onchange = e => {
+  const v = parseTime(e.target.value); if (v > 0) S().presets[+e.target.dataset.p] = v;
+  e.target.value = fmtTime(S().presets[+e.target.dataset.p]); persist(); renderPresets();
+});
+$('#sReady').onchange = e => { S().ready = Math.max(0, Math.min(30, parseInt(e.target.value) || 0)); e.target.value = S().ready; persist(); };
+$('#sSound').onchange = e => { S().sound = e.target.checked; persist(); };
+$('#sTicks').onchange = e => { S().ticks = e.target.checked; persist(); };
+$('#sVol').oninput = e => { S().volume = +e.target.value; };
+$('#sVol').onchange = () => { persist(); beep([0], 880, .2); };
+$('#sTop').onchange = e => { S().onTop = e.target.checked; persist(); api()?.set_on_top(S().onTop); };
+$('#openFolder').onclick = () => api()?.open_data_folder();
+$('#clearHist').onclick = () => ask('Clear all workout history?', 'Clear', () => { state.history = []; persist(); });
+
+// ---------- backup / restore ----------
+$('#backupBtn').onclick = async () => {
+  const json = JSON.stringify(state, null, 2), name = `workout-timer-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  if (api()) return api().export_backup(json, name);
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([json], { type: 'application/json' })), download: name });
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+function restoreFrom(text) {
+  let s; try { s = JSON.parse(text); } catch { return ask("That file isn't a Workout Timer backup.", 'OK', null); }
+  if (!s || !Array.isArray(s.workouts)) return ask("That file isn't a Workout Timer backup.", 'OK', null);
+  ask(`Load ${s.workouts.length} workout${s.workouts.length === 1 ? '' : 's'} from the backup? This replaces what's on this device.`, 'Load', () => {
+    state = { workouts: s.workouts, history: s.history || [], settings: { ...DEFAULT_SETTINGS, ...(s.settings || {}) } };
+    qt.rest = S().rest; persist(); renderHello(); renderPresets(); renderSettings(); qStop();
+  });
+}
+$('#restoreBtn').onclick = async () => {
+  if (api()) { const t = await api().import_backup(); if (t) restoreFrom(t); return; }
+  const inp = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json' });
+  inp.onchange = () => inp.files[0]?.text().then(restoreFrom);
+  inp.click();
+};
+
+// ---------- keep the screen awake while a timer is going (phones) ----------
+let wake = null, wakeBusy = false;
+async function updateWake() {
+  if (!('wakeLock' in navigator) || wakeBusy) return;
+  const want = !!run || (qt.phase !== 'idle' && qt.phase !== 'done');
+  wakeBusy = true;
+  try {
+    if (want && !wake && document.visibilityState === 'visible') {
+      wake = await navigator.wakeLock.request('screen');
+      wake.addEventListener('release', () => { wake = null; });
+    } else if (!want && wake) { await wake.release(); wake = null; }
+  } catch { wake = null; }
+  wakeBusy = false;
+}
+setInterval(updateWake, 1000);
+
+// ---------- web app: offline support + ask the browser not to clear our data ----------
+if (!api() && location.protocol.startsWith('http') && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.storage?.persist?.().catch(() => {});
+}
+// iPhone only allows sound after a tap: wake the audio engine on the first touch.
+document.addEventListener('pointerdown', unlockAudio, { once: true });
+
+// ---------- keyboard ----------
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT'].includes(e.target.tagName)) return;
+  if ($('#confirmScrim').classList.contains('on')) { if (e.key === 'Escape') closeAsk(false); else if (e.key === 'Enter') closeAsk(true); return; }
+  if (e.key === 'Escape') {
+    if ($('#sheetScrim').classList.contains('on')) closeSheet();
+    else if (document.body.classList.contains('drawer-open')) closeDrawer();
+    else if (current === 'run' && run) stopRun();
+    else if (current === 'timer') qStop();
+    return;
+  }
+  if ($('#sheetScrim').classList.contains('on')) return;
+  if (current === 'run' && run) {
+    if (e.code === 'Space') { e.preventDefault(); nextStep(); }
+    else if (e.key.toLowerCase() === 'p') togglePause();
+    else if (e.key === 'ArrowLeft') prevStep();
+  } else if (current === 'timer') {
+    if (e.code === 'Space') { e.preventDefault(); qMain(); }
+    else if (e.key >= '1' && e.key <= '3') setQRest(S().presets[e.key - 1]);
+    else if (e.key.toLowerCase() === 'r') qStop();
+  }
+  document.activeElement?.blur?.();
+});
+
+// ---------- sound ----------
+let ac;
+function unlockAudio() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); ac.resume(); } catch {} }
+function tick() { if (S().ticks) beep([0], 660, .12); }
+function beep(delays, freq = 880, len = .2) {
+  if (!S().sound) return;
+  try {
+    unlockAudio();
+    const vol = .5 * (S().volume / 100);
+    delays.forEach(d => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine'; o.frequency.value = freq; o.connect(g); g.connect(ac.destination);
+      const t = ac.currentTime + d;
+      g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + .01);
+      g.gain.exponentialRampToValueAtTime(.0001, t + len);
+      o.start(t); o.stop(t + len + .02);
+    });
+  } catch {}
+}
+
+// pywebview injects its API shortly after load; fall back to browser storage if it never shows up.
+if (api()) loadState();
+else { window.addEventListener('pywebviewready', loadState); setTimeout(() => { if (!api()) loadState(); }, 700); }
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# desktop build output and local data
+*.exe
+Workout Timer Data/
+old-voice-version/
+__pycache__/
+build/
+dist/
+*.spec
+# old local test build (the site is built into docs/)
+web/

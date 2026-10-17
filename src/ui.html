@@ -992,6 +992,62 @@ $('#restoreBtn').onclick = async () => {
   inp.click();
 };
 
+// ---------- CSV ----------
+const CSV_COLS = ['workout', 'exercise', 'type', 'sets', 'reps', 'set_time', 'rest', 'rest_after', 'notes'];
+function parseCSV(text) {                 // RFC 4180; each row also carries .ln, its 1-based start line in the file
+  text = String(text).replace(/^﻿/, '');
+  const first = text.split(/\r?\n/)[0]; let q = false, sc = 0, cc = 0;
+  for (const c of first) { if (c === '"') q = !q; else if (!q) { if (c === ';') sc++; else if (c === ',') cc++; } }
+  const d = sc > cc ? ';' : ',', rows = []; let row = [], cell = '', ln = 1, start = 1; q = false;
+  const endRow = () => { row.push(cell); cell = ''; if (row.some(c => c.trim())) { row.ln = start; rows.push(row); } row = []; start = ln; };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else { if (c === '\n') ln++; cell += c; } }
+    else if (c === '"') q = true;
+    else if (c === d) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; ln++; endRow(); }
+    else cell += c;
+  }
+  if (cell || row.length) endRow();
+  return rows;
+}
+function uniqueName(name, taken) {
+  let n = name, i = 2; while (taken.has(n)) n = `${name} (${i++})`; return n;
+}
+const csvGuard = s => /^[=+@\t]/.test(s) ? "'" + s : s;
+const csvUnguard = s => /^'[=+@\t]/.test(s) ? s.slice(1) : s;
+function csvToWorkouts(text, takenNames) {
+  const rows = parseCSV(text), head = (rows[0] || []).map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
+  const col = Object.fromEntries(CSV_COLS.map(c => [c, head.indexOf(c)]));
+  if (col.workout < 0) return { workouts: [], problems: [], error: "No 'workout' column in the header." };
+  const problems = [], groups = new Map(), taken = new Set(takenNames);
+  for (const r of rows.slice(1)) {
+    const get = c => col[c] < 0 ? '' : (r[col[c]] ?? '').trim(), txt = c => csvUnguard(get(c)), p = m => problems.push(`row ${r.ln}: ${m}`);
+    const wn = txt('workout'); if (!wn) { p('no workout name, skipped'); continue; }
+    if (!groups.has(wn)) groups.set(wn, []);
+    const list = groups.get(wn);
+    let sets = 3, s = get('sets');
+    if (s) {
+      const n = Number(s);
+      if (!Number.isInteger(n)) p(`sets "${s}" isn't a number, used 3`);
+      else if (n < 1 || n > 20) { sets = n < 1 ? 1 : 20; p(`sets ${n} out of range, used ${sets}`); }
+      else sets = n;
+    }
+    let type = txt('type') || 'Standard';
+    if (!TYPES[type]) { p(`unknown type "${type}", used Standard`); type = 'Standard'; }
+    const t = (c, d) => get(c) ? parseTime(get(c)) : d;
+    list.push(ex({ name: txt('exercise') || `Exercise ${list.length + 1}`, type, sets, reps: txt('reps'), work: t('set_time', 0), rest: t('rest', 60), after: t('rest_after', 120), notes: txt('notes') }));
+  }
+  const workouts = [...groups].map(([n, exercises]) => { const name = uniqueName(n, taken); taken.add(name); return { id: uid(), name, exercises }; });
+  return { workouts, problems, error: null };
+}
+function workoutsToCSV(workouts) {
+  const cell = s => /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s, out = [CSV_COLS.join(',')];
+  for (const w of workouts) for (const e of w.exercises)
+    out.push([csvGuard(w.name), csvGuard(e.name), csvGuard(e.type), e.sets, csvGuard(String(e.reps ?? '')), fmtTime(e.work), fmtTime(e.rest), fmtTime(e.after), csvGuard(e.notes || '')].map(v => cell(String(v))).join(','));
+  return '﻿' + out.join('\r\n') + '\r\n';
+}
+
 // ---------- keep the screen awake while the app is open (phones) ----------
 let wake = null, wakeBusy = false;
 async function updateWake() {

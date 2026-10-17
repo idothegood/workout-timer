@@ -64,6 +64,18 @@ class Api:
         paths = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=('Backup (*.json)',))
         return Path(paths[0]).read_text(encoding='utf-8') if paths else None
 
+    def export_csv(self, text, name):
+        path = webview.windows[0].create_file_dialog(webview.FileDialog.SAVE, save_filename=name,
+                                                     file_types=('CSV (*.csv)',))
+        if not path:
+            return False
+        Path(path if isinstance(path, str) else path[0]).write_text(text, encoding='utf-8')
+        return True
+
+    def import_csv(self):
+        paths = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=('CSV (*.csv)',))
+        return Path(paths[0]).read_text(encoding='utf-8-sig') if paths else None
+
     def set_on_top(self, on):
         # pywebview's own window.on_top hangs the window (WinForms backend), so flip the flag through Win32.
         u32 = ctypes.windll.user32

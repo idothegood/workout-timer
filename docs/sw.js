@@ -1,4 +1,4 @@
-const CACHE = 'wt-fc7b2cffc1';
+const CACHE = 'wt-f365778a08';
 const FILES = ["./", "apple-touch-icon.png", "favicon.png", "icon-192.png", "icon-256.png", "icon-512.png", "icon-maskable-512.png", "manifest.webmanifest"];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

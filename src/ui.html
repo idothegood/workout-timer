@@ -125,7 +125,7 @@
   #confirmScrim { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40; display:none; align-items:center; justify-content:center; padding:20px; }
   #confirmScrim.on { display:flex; }
   .dialog { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:20px; width:min(360px,100%); }
-  .dialog p { margin:0 0 18px; font-size:16px; }
+  .dialog p { margin:0 0 18px; font-size:16px; white-space:pre-line; }
   .dialog .row2 { display:flex; gap:10px; }
   .dialog .row2 .btn { flex:1; padding:11px; }
   .btn.solid-danger { background:var(--danger); color:#fff; border:0; font-weight:650; }
@@ -261,6 +261,8 @@
   <div class="appbar">
     <button class="icon-btn menu-btn" title="Menu"><svg><use href="#i-menu"/></svg></button>
     <h1>Workouts</h1>
+    <button class="btn" id="csvImport" style="padding:8px 12px">Import</button>
+    <button class="btn" id="csvExport" style="padding:8px 12px">Export</button>
   </div>
   <div class="scroll" id="wlist"></div>
   <button class="fab" id="newBtn" title="New workout">+</button>
@@ -689,15 +691,19 @@ function renderWorkouts() {
       </div>
       <button class="icon-btn" data-edit="${w.id}" title="Edit" style="font-size:16px">✎</button>
       <button class="icon-btn" data-dup="${w.id}" title="Duplicate" style="font-size:16px">⧉</button>
+      <button class="icon-btn" data-share="${w.id}" title="Export CSV" style="font-size:16px">⇪</button>
     </div>`;
   }).join('') + '<div style="height:70px"></div>'
     : `<div class="empty"><div class="big">🏋️</div>No workouts yet.<br>Tap <b>+</b> to build one.</div>`;
 }
 $('#wlist').addEventListener('click', e => {
-  const t = e.target.closest('[data-start],[data-edit],[data-dup]'); if (!t) return;
+  const t = e.target.closest('[data-start],[data-edit],[data-dup],[data-share]'); if (!t) return;
   if (t.dataset.start) startRun(state.workouts.find(w => w.id === t.dataset.start));
   else if (t.dataset.edit) openEditor(t.dataset.edit);
-  else if (t.dataset.dup) {
+  else if (t.dataset.share) {
+    const w = state.workouts.find(w => w.id === t.dataset.share);
+    shareFile(workoutsToCSV([w]), (w.name || 'workout').replace(/[\\/:*?"<>|]/g, '-') + '.csv', 'text/csv');
+  } else if (t.dataset.dup) {
     const w = structuredClone(state.workouts.find(w => w.id === t.dataset.dup));
     w.id = uid(); w.name += ' (copy)'; w.exercises.forEach(x => x.id = uid());
     state.workouts.push(w); persist(); renderWorkouts();
@@ -974,9 +980,29 @@ $('#clearHist').onclick = () => ask('Clear all workout history?', 'Clear', () =>
 $('#backupBtn').onclick = async () => {
   const json = JSON.stringify(state, null, 2), name = `workout-timer-backup-${new Date().toISOString().slice(0, 10)}.json`;
   if (api()) return api().export_backup(json, name);
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([json], { type: 'application/json' })), download: name });
-  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  downloadFile(json, name, 'application/json');
 };
+function downloadFile(text, name, type) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text], { type })), download: name });
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function shareFile(text, name, type) {
+  if (api()) return api().export_csv(text, name);
+  const file = new File([text], name, { type });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { return await navigator.share({ files: [file], title: name }); }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  downloadFile(text, name, type);
+}
+async function pickTextFile(accept) {
+  if (api()) return api().import_csv();
+  return new Promise(res => {
+    const inp = Object.assign(document.createElement('input'), { type: 'file', accept });
+    inp.onchange = () => res(inp.files[0]?.text() ?? null);
+    inp.click();
+  });
+}
 function restoreFrom(text) {
   let s; try { s = JSON.parse(text); } catch { return ask("That file isn't a Workout Timer backup.", 'OK', null); }
   if (!s || !Array.isArray(s.workouts)) return ask("That file isn't a Workout Timer backup.", 'OK', null);
@@ -1129,6 +1155,16 @@ function beep(delays, freq = 880, len = .2) {
 // pywebview injects its API shortly after load; fall back to browser storage if it never shows up.
 if (api()) loadState();
 else { window.addEventListener('pywebviewready', loadState); setTimeout(() => { if (!api()) loadState(); }, 700); }
+$('#csvExport').onclick = () => shareFile(workoutsToCSV(state.workouts), `workouts-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv');
+$('#csvImport').onclick = async () => {
+  const text = await pickTextFile('.csv,text/csv'); if (text == null) return;
+  const { workouts, problems, error } = csvToWorkouts(text, state.workouts.map(w => w.name));
+  if (error) return ask(error, 'OK', null);
+  const n = workouts.reduce((a, w) => a + w.exercises.length, 0), more = problems.length - 8;
+  ask(`Add ${workouts.length} workout${workouts.length === 1 ? '' : 's'} (${n} exercise${n === 1 ? '' : 's'})?` +
+    (problems.length ? '\n\n' + problems.slice(0, 8).join('\n') + (more > 0 ? `\n…and ${more} more` : '') : ''),
+    'Add', () => { state.workouts.push(...workouts); persist(); renderWorkouts(); });
+};
 </script>
 </body>
 </html>

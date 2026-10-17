@@ -23,7 +23,7 @@ function wakeStub() {
 }
 
 // Fresh browser + page with a fake clock; optionally seeds localStorage['wt-state'] with `state`.
-async function openApp({ state } = {}) {
+async function openApp({ state, init } = {}) {
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 390, height: 800 } });
   const page = await context.newPage();
@@ -32,6 +32,7 @@ async function openApp({ state } = {}) {
   await page.clock.install();
   if (state) await page.addInitScript(s => localStorage.setItem('wt-state', s), JSON.stringify(state));
   await page.addInitScript(wakeStub);
+  if (init) await page.addInitScript(init);
   await page.goto(APP);
   await page.clock.runFor(800);   // fires the loadState fallback timeout
   return { browser, page, errors };

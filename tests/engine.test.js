@@ -41,8 +41,8 @@ test('hold 0 enters immediately', async () => {
 test('late tick is deterministic', async () => {
   assert.deepEqual(await run(`() => {
     const s = newSession(W, 0); sessTap(s, 0);
-    const o = { a: sessTick(s, 20000, 2.5), until: s.alertUntil };
-    o.b = sessTick(s, 20001, 2.5); return o; }`),
+    const o = { a: sessTick(s, 11000, 2.5), until: s.alertUntil };
+    o.b = sessTick(s, 12500, 2.5); return o; }`),
     { a: ['alert'], until: 12500, b: ['enter'] });
 });
 
@@ -107,4 +107,11 @@ test('tap while paused advances, stays paused, unpause starts the step fresh', a
     const o = { e: sessTap(s, 6000), i: s.i, paused: s.paused };
     sessUnpause(s, 8000); o.end = s.end; o.ss = s.stepStart; o.paused2 = s.paused; return o; }`),
     { e: ['enter'], i: 2, paused: true, end: 53000, ss: 8000, paused2: false });
+});
+
+test('rest found ended past its hold: straight to the next step, no alert', async () => {
+  assert.deepEqual(await run(`() => {
+    const s = newSession(W, 0); sessTap(s, 0);
+    const e = sessTick(s, 60000, 2.5); return { e, i: s.i, alert: s.alert, ss: s.stepStart }; }`),
+    { e: ['enter'], i: 2, alert: false, ss: 60000 });
 });

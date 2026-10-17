@@ -59,3 +59,30 @@ test('rest chip mid-rest changes the countdown', async t => {
   assert.match(await cls(page), /p-rest/);
   assert.deepEqual(errors, []);
 });
+
+test('bad saved hold falls back to the default and never stalls', async t => {
+  const app = await openApp({ state: { workouts: [], history: [], settings: { rest: 10, qSets: 2, hold: null } } }); t.after(() => app.browser.close());
+  const { page, errors } = app;
+  assert.equal(await page.evaluate(() => S().hold), 2.5);
+  await page.click('#qMain'); await page.click('#qMain');
+  await page.clock.runFor(10100);
+  assert.match(await cls(page), /p-alert/);
+  await page.clock.runFor(2600);
+  assert.equal(await txt(page, '#qSet'), '2');
+  assert.match(await cls(page), /p-work/);
+  assert.deepEqual(errors, []);
+});
+
+test('shortening the rest below the elapsed time still gets the full hold', async t => {
+  const { page, errors } = await open(t);
+  await page.click('#qMain'); await page.click('#qMain');
+  await page.clock.runFor(8000);
+  await page.evaluate(() => setQRest(5)); await page.clock.runFor(200);
+  assert.match(await cls(page), /p-alert alerting/);
+  await page.clock.runFor(1500);
+  assert.match(await cls(page), /p-alert/);
+  assert.equal(await txt(page, '#qSet'), '1');
+  await page.clock.runFor(1200);
+  assert.equal(await txt(page, '#qSet'), '2');
+  assert.deepEqual(errors, []);
+});

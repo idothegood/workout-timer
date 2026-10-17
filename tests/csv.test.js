@@ -85,3 +85,15 @@ test('inherited Object.prototype names are not valid types', async () => {
   assert.deepEqual(r.workouts[0].exercises.map(e => e.type), ['Standard', 'Standard']);
   assert.deepEqual(r.problems, ['row 2: unknown type "constructor", used Standard', 'row 3: unknown type "__proto__", used Standard']);
 });
+
+test('bad time cells fall back to column defaults with a problem', async () => {
+  const r = await run(() => csvToWorkouts('workout,set_time,rest,rest_after\nA,abc,1 min,-30\nA,45,1:30,2m\nA, 1.5M ,90,0\n', []));
+  assert.deepEqual(r.workouts[0].exercises.map(e => [e.work, e.rest, e.after]), [[0, 60, 120], [45, 90, 120], [90, 90, 0]]);
+  assert.deepEqual(r.problems, ['row 2: set_time "abc" not understood, used 0', 'row 2: rest "1 min" not understood, used 1:00', 'row 2: rest_after "-30" not understood, used 2:00']);
+});
+
+test('type matches case-insensitively and stores the canonical name', async () => {
+  const r = await run(() => csvToWorkouts('workout,type\nA,superset\nA, GIANT SET \nA,toString\n', []));
+  assert.deepEqual(r.workouts[0].exercises.map(e => e.type), ['Superset', 'Giant set', 'Standard']);
+  assert.deepEqual(r.problems, ['row 4: unknown type "toString", used Standard']);
+});

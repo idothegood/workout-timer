@@ -74,7 +74,13 @@ class Api:
 
     def import_csv(self):
         paths = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=('CSV (*.csv)',))
-        return Path(paths[0]).read_text(encoding='utf-8-sig') if paths else None
+        if not paths:
+            return None
+        data = Path(paths[0]).read_bytes()
+        try:
+            return data.decode('utf-8-sig')
+        except UnicodeDecodeError:  # Excel's "CSV (Comma delimited)" saves Windows-1252
+            return data.decode('cp1252', errors='replace')
 
     def set_on_top(self, on):
         # pywebview's own window.on_top hangs the window (WinForms backend), so flip the flag through Win32.

@@ -438,11 +438,16 @@ async function loadState() {
   else try { s = JSON.parse(localStorage.getItem('wt-state')); } catch {}
   state = s && s.workouts ? s : { workouts: [sampleWorkout()], history: [] };
   state.history ||= [];
-  state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
+  state.settings = fixSettings(state.settings);
   if (api()) { if (S().onTop) api().set_on_top(true); api().data_folder().then(f => $('#sFolder').textContent = f); }
   else { $('#onTopRow').style.display = 'none'; $('#openFolder').style.display = 'none'; }
   qt.rest = S().rest;
   renderHello(); renderPresets(); go('timer');
+}
+function fixSettings(o) {              // saved settings over the defaults; a bad hold would stall the alert
+  const s = { ...DEFAULT_SETTINGS, ...(o || {}) }, h = typeof s.hold === 'number' ? s.hold : parseFloat(s.hold);
+  s.hold = Number.isFinite(h) ? Math.max(0, Math.min(5, h)) : DEFAULT_SETTINGS.hold;
+  return s;
 }
 function persist() {
   if (api()) api().save(state);
@@ -484,12 +489,15 @@ function sessEnter(s, i, now) {
   if (s.paused) { s.pausedLeft = dur * 1000; s.pausedElapsed = 0; }   // skipped while paused: stay paused, fresh step
 }
 const sessNext = (s, now) => { sessEnter(s, s.i + 1, now); return s.done ? ['enter', 'finish'] : ['enter']; };
+// A rest found ended past its hold (at least 1s) was missed while away: no alert for it.
+const sessStale = (s, now, holdSec) => s.steps[s.i]?.kind === 'rest' && !s.alert && s.end && now >= s.end + Math.max(holdSec, 1) * 1000;
 function sessTick(s, now, holdSec) {
   if (s.done || s.paused) return [];
   if (s.alert) return now >= s.alertUntil ? sessNext(s, now) : [];
   const st = s.steps[s.i];
   if (st.dur && now >= s.end) {
     if (st.kind === 'rest') {
+      if (sessStale(s, now, holdSec)) return sessNext(s, now);
       s.alert = true; s.alertUntil = s.end + holdSec * 1000;
       return holdSec === 0 ? ['alert', ...sessNext(s, now)] : ['alert'];
     }
@@ -581,7 +589,7 @@ function setQRest(s) {
   const ss = qt.sess;
   if (ss) {
     ss.steps.forEach(st => { if (st.kind === 'rest') st.dur = s; });
-    if (ss.steps[ss.i]?.kind === 'rest' && !ss.alert) ss.end = ss.stepStart + s * 1000;
+    if (ss.steps[ss.i]?.kind === 'rest' && !ss.alert) ss.end = Math.max(Date.now(), ss.stepStart + s * 1000);
   }
   qDraw();
 }
@@ -945,8 +953,9 @@ function runDraw() {
 
 // One clock for both timers. setInterval (not requestAnimationFrame) so rests still end and beep
 // while the window is minimized or behind other windows. The quick timer keeps running while you browse menus.
-// While hidden, a session in alert is left alone: nobody sees the hold end, so onVisible() starts the next set on return.
-const idle = ss => document.visibilityState === 'hidden' && ss.alert;
+// While hidden, only a running rest ticks (so its alert still sounds); anything else, an alert or a rest missed past its
+// hold waits, and onVisible() starts the next step on return: a work set never starts while nobody is looking.
+const idle = ss => document.visibilityState === 'hidden' && (ss.alert || ss.steps[ss.i]?.kind !== 'rest' || sessStale(ss, Date.now(), S().hold));
 setInterval(() => {
   if (run && !idle(run.sess)) runEvents(sessTick(run.sess, Date.now(), S().hold));
   if (qt.sess && !qt.sess.done) { if (!idle(qt.sess)) qEvents(sessTick(qt.sess, Date.now(), S().hold)); }
@@ -1008,15 +1017,18 @@ async function pickTextFile(accept) {
   if (api()) return api().import_csv();
   return new Promise(res => {
     const inp = Object.assign(document.createElement('input'), { type: 'file', accept });
-    inp.onchange = () => res(inp.files[0]?.text() ?? null);
+    inp.onchange = () => res(inp.files[0]?.arrayBuffer().then(decodeText) ?? null);
     inp.click();
   });
+}
+function decodeText(buf) {             // UTF-8, else Windows-1252 (Excel's "CSV (Comma delimited)")
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return new TextDecoder('windows-1252').decode(buf); }
 }
 function restoreFrom(text) {
   let s; try { s = JSON.parse(text); } catch { return ask("That file isn't a Workout Timer backup.", 'OK', null); }
   if (!s || !Array.isArray(s.workouts)) return ask("That file isn't a Workout Timer backup.", 'OK', null);
   ask(`Load ${s.workouts.length} workout${s.workouts.length === 1 ? '' : 's'} from the backup? This replaces what's on this device.`, 'Load', () => {
-    state = { workouts: s.workouts, history: s.history || [], settings: { ...DEFAULT_SETTINGS, ...(s.settings || {}) } };
+    state = { workouts: s.workouts, history: s.history || [], settings: fixSettings(s.settings) };
     qt.rest = S().rest; persist(); renderHello(); renderPresets(); renderSettings(); qStop();
   });
 }
@@ -1068,10 +1080,14 @@ function csvToWorkouts(text, takenNames) {
       else if (n < 1 || n > 20) { sets = n < 1 ? 1 : 20; p(`sets ${n} out of range, used ${sets}`); }
       else sets = n;
     }
-    let type = txt('type') || 'Standard';
-    if (!Object.hasOwn(TYPES, type)) { p(`unknown type "${type}", used Standard`); type = 'Standard'; }
-    const t = (c, d) => get(c) ? parseTime(get(c)) : d;
-    list.push(ex({ name: txt('exercise') || `Exercise ${list.length + 1}`, type, sets, reps: txt('reps'), work: t('set_time', 0), rest: t('rest', 60), after: t('rest_after', 120), notes: txt('notes') }));
+    const tc = txt('type'), type = !tc ? 'Standard' : Object.keys(TYPES).find(k => k.toLowerCase() === tc.toLowerCase());
+    if (!type) p(`unknown type "${tc}", used Standard`);
+    const t = (c, d) => {
+      const v = get(c); if (!v) return d;
+      if (/^(\d+|\d+:\d{1,2}|\d+(\.\d+)?m)$/i.test(v)) return parseTime(v);
+      p(`${c} "${v}" not understood, used ${fmtTime(d)}`); return d;
+    };
+    list.push(ex({ name: txt('exercise') || `Exercise ${list.length + 1}`, type: type || 'Standard', sets, reps: txt('reps'), work: t('set_time', 0), rest: t('rest', 60), after: t('rest_after', 120), notes: txt('notes') }));
   }
   const workouts = [...groups].map(([n, exercises]) => { const name = uniqueName(n, taken); taken.add(name); return { id: uid(), name, exercises }; });
   return { workouts, problems, error: null };
@@ -1166,12 +1182,14 @@ if (api()) loadState();
 else { window.addEventListener('pywebviewready', loadState); setTimeout(() => { if (!api()) loadState(); }, 700); }
 $('#csvExport').onclick = () => shareFile(workoutsToCSV(state.workouts), `workouts-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv');
 $('#csvImport').onclick = async () => {
-  const text = await pickTextFile('.csv,text/csv'); if (text == null) return;
+  let text; try { text = await pickTextFile('.csv,text/csv'); } catch { return ask("Couldn't read that file.", 'OK', null); }
+  if (text == null) return;
   const { workouts, problems, error } = csvToWorkouts(text, state.workouts.map(w => w.name));
   if (error) return ask(error, 'OK', null);
   const n = workouts.reduce((a, w) => a + w.exercises.length, 0), more = problems.length - 8;
-  ask(`Add ${workouts.length} workout${workouts.length === 1 ? '' : 's'} (${n} exercise${n === 1 ? '' : 's'})?` +
-    (problems.length ? '\n\n' + problems.slice(0, 8).join('\n') + (more > 0 ? `\n…and ${more} more` : '') : ''),
+  const list = problems.length ? '\n\n' + problems.slice(0, 8).join('\n') + (more > 0 ? `\n…and ${more} more` : '') : '';
+  if (!workouts.length) return ask('Nothing to import.' + list, 'OK', null);
+  ask(`Add ${workouts.length} workout${workouts.length === 1 ? '' : 's'} (${n} exercise${n === 1 ? '' : 's'})?` + list,
     'Add', () => { state.workouts.push(...workouts); persist(); renderWorkouts(); });
 };
 </script>

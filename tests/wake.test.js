@@ -66,3 +66,21 @@ test('hidden: rest-end alert still fires, but the next set waits for return', as
   assert.match(await page.evaluate(() => $('#timer').className), /p-work/);
   assert.deepEqual(errors, []);
 });
+
+test('hidden: a get-ready countdown never starts the timed work set', async t => {
+  const app = await openApp({ state: { history: [], settings: { ready: 5 }, workouts: [{ id: 'w', name: 'T', exercises: [
+    { id: 'a', name: 'Plank', type: 'Standard', sets: 1, reps: '', work: 45, rest: 0, after: 0, notes: '' }] }] } });
+  t.after(() => app.browser.close());
+  const { page, errors } = app;
+  await page.evaluate(() => go('workouts'));
+  await page.click('[data-start="w"]'); await page.clock.runFor(100);
+  await setVis(page, 'hidden');
+  await page.clock.runFor(10000);
+  assert.equal(await page.evaluate(() => run.sess.steps[run.sess.i].kind), 'ready');
+  await setVis(page, 'visible');
+  assert.equal(await page.evaluate(() => run.sess.steps[run.sess.i].kind), 'work');
+  const left = await page.evaluate(() => run.sess.end - Date.now());
+  assert.ok(left > 44000 && left <= 45000, `countdown starts at return, ${left} ms left`);
+  assert.equal(await page.textContent('#run .clock'), '45');
+  assert.deepEqual(errors, []);
+});

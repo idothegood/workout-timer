@@ -64,6 +64,24 @@ class Api:
         paths = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=('Backup (*.json)',))
         return Path(paths[0]).read_text(encoding='utf-8') if paths else None
 
+    def export_csv(self, text, name):
+        path = webview.windows[0].create_file_dialog(webview.FileDialog.SAVE, save_filename=name,
+                                                     file_types=('CSV (*.csv)',))
+        if not path:
+            return False
+        Path(path if isinstance(path, str) else path[0]).write_bytes(text.encode('utf-8'))  # bytes: text mode would turn \r\n into \r\r\n
+        return True
+
+    def import_csv(self):
+        paths = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=('CSV (*.csv)',))
+        if not paths:
+            return None
+        data = Path(paths[0]).read_bytes()
+        try:
+            return data.decode('utf-8-sig')
+        except UnicodeDecodeError:  # Excel's "CSV (Comma delimited)" saves Windows-1252
+            return data.decode('cp1252', errors='replace')
+
     def set_on_top(self, on):
         # pywebview's own window.on_top hangs the window (WinForms backend), so flip the flag through Win32.
         u32 = ctypes.windll.user32

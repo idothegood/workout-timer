@@ -115,9 +115,11 @@
   .p-rest .phase, .p-rest .clock { color:var(--rest); }
   .p-rest .ring-fg { stroke:var(--rest); }
   .p-rest .main-btn { background:var(--rest); color:#071a33; }
-  .p-ready .phase, .p-ready .clock { color:var(--ready); }
+  .p-ready .phase, .p-ready .clock, .p-alert .phase, .p-alert .clock { color:var(--ready); }
   .p-ready .ring-fg { stroke:var(--ready); }
-  .p-ready .main-btn { background:var(--ready); color:#2b1d00; }
+  .p-ready .main-btn, .p-alert .main-btn { background:var(--ready); color:#2b1d00; }
+  .screen.p-alert { animation:alert .5s ease-in-out infinite; }   /* time's up: whole screen pulses until the hold ends */
+  @keyframes alert { 0%, 100% { background:var(--bg); } 50% { background:color-mix(in srgb, var(--ready) 35%, transparent); } }
   .p-idle .main-btn { background:linear-gradient(135deg,var(--work),var(--work2)); color:#06240f; }
   .paused .clock { opacity:.45; }
   .flash { animation:flash .9s ease-out 1; }
@@ -132,7 +134,7 @@
   #confirmScrim { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40; display:none; align-items:center; justify-content:center; padding:20px; }
   #confirmScrim.on { display:flex; }
   .dialog { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:20px; width:min(360px,100%); }
-  .dialog p { margin:0 0 18px; font-size:16px; }
+  .dialog p { margin:0 0 18px; font-size:16px; white-space:pre-line; }
   .dialog .row2 { display:flex; gap:10px; }
   .dialog .row2 .btn { flex:1; padding:11px; }
   .btn.solid-danger { background:var(--danger); color:#fff; border:0; font-weight:650; }
@@ -259,7 +261,7 @@
     </div>
     <div class="rest-label">Rest time</div>
     <div class="presets" id="presets"></div>
-    <div class="keys">SPACE = set done / skip rest &nbsp;·&nbsp; 1-3 = preset &nbsp;·&nbsp; Esc = stop</div>
+    <div class="keys">SPACE = start / set done / skip &nbsp;·&nbsp; 1-3 = preset &nbsp;·&nbsp; Esc = stop</div>
   </div>
 </section>
 
@@ -268,6 +270,8 @@
   <div class="appbar">
     <button class="icon-btn menu-btn" title="Menu"><svg><use href="#i-menu"/></svg></button>
     <h1>Workouts</h1>
+    <button class="btn" id="csvImport" style="padding:8px 12px">Import</button>
+    <button class="btn" id="csvExport" style="padding:8px 12px">Export</button>
   </div>
   <div class="scroll" id="wlist"></div>
   <button class="fab" id="newBtn" title="New workout">+</button>
@@ -356,12 +360,14 @@
       <div class="row stack"><div class="lbl">Rest presets<small>The 3 buttons on the Timer screen. Type 90 or 1:30.</small></div>
         <div class="presets-in"><input class="presetIn" data-p="0"><input class="presetIn" data-p="1"><input class="presetIn" data-p="2"></div></div>
       <div class="row"><div class="lbl">Get-ready countdown<small>Before a workout starts, in seconds</small></div><input id="sReady" type="number" min="0" max="30" style="width:76px;text-align:center"></div>
+      <div class="row"><div class="lbl">Time's up hold<small>Seconds the screen flashes before the next set</small></div><input id="sHold" type="number" min="0" max="5" step="0.5" style="width:76px;text-align:center"></div>
     </div>
     <div class="section-title">Sound &amp; window</div>
     <div class="group">
       <div class="row"><div class="lbl">Sounds</div><label class="switch"><input type="checkbox" id="sSound"><span></span></label></div>
       <div class="row"><div class="lbl">3-2-1 countdown beeps</div><label class="switch"><input type="checkbox" id="sTicks"><span></span></label></div>
       <div class="row"><div class="lbl">Volume</div><input type="range" id="sVol" min="5" max="100" style="width:150px;padding:0;accent-color:var(--work)"></div>
+      <div class="row"><div class="lbl">Keep screen on<small>While the app is open</small></div><label class="switch"><input type="checkbox" id="sAwake"><span></span></label></div>
       <div class="row" id="onTopRow"><div class="lbl">Keep window on top<small>Stays visible over other windows</small></div><label class="switch"><input type="checkbox" id="sTop"><span></span></label></div>
     </div>
     <div class="section-title">Data</div>
@@ -418,7 +424,7 @@ const TYPES = {
   'Tempo':           { hint: 'Control the tempo: slow on the way down.' },
   'Warm-up':         { hint: 'Light weight, get the blood moving.' },
 };
-const DEFAULT_SETTINGS = { name: '', presets: [60, 90, 120], rest: 90, qSets: 4, ready: 5, sound: true, ticks: true, volume: 60, onTop: false };
+const DEFAULT_SETTINGS = { name: '', presets: [60, 90, 120], rest: 90, qSets: 4, ready: 5, sound: true, ticks: true, volume: 60, onTop: false, hold: 2.5, keepAwake: true };
 
 // ---------- storage (JSON file via the desktop app; localStorage in a browser) ----------
 let state = { workouts: [], history: [], settings: { ...DEFAULT_SETTINGS } };
@@ -432,11 +438,16 @@ async function loadState() {
   else try { s = JSON.parse(localStorage.getItem('wt-state')); } catch {}
   state = s && s.workouts ? s : { workouts: [sampleWorkout()], history: [] };
   state.history ||= [];
-  state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
+  state.settings = fixSettings(state.settings);
   if (api()) { if (S().onTop) api().set_on_top(true); api().data_folder().then(f => $('#sFolder').textContent = f); }
   else { $('#onTopRow').style.display = 'none'; $('#openFolder').style.display = 'none'; }
   qt.rest = S().rest;
   renderHello(); renderPresets(); go('timer');
+}
+function fixSettings(o) {              // saved settings over the defaults; a bad hold would stall the alert
+  const s = { ...DEFAULT_SETTINGS, ...(o || {}) }, h = typeof s.hold === 'number' ? s.hold : parseFloat(s.hold);
+  s.hold = Number.isFinite(h) ? Math.max(0, Math.min(5, h)) : DEFAULT_SETTINGS.hold;
+  return s;
 }
 function persist() {
   if (api()) api().save(state);
@@ -464,6 +475,54 @@ const fmtClock = s => { s = Math.max(0, Math.floor(s)); return `${Math.floor(s/6
 const fmtLong = s => { s = Math.round(s); const m = Math.floor(s/60); return m ? `${m} min` : `${s}s`; };
 const fmtChip = s => s < 60 ? `${s}s` : s % 60 ? fmtTime(s) : `${s/60} min`;
 const fmtField = s => s ? (s >= 60 ? fmtTime(s) : String(s)) : '';
+
+// ---------- session engine ----------
+// Pure state machine shared by the guided run and the quick timer; `now` is always passed in. Each call returns events.
+function newSession(steps, now) {
+  const s = { steps, i: 0, alert: false, alertUntil: 0, stepStart: now, end: 0, paused: false, pausedLeft: 0, pausedElapsed: 0, lastBeep: null, started: now, done: false };
+  sessEnter(s, 0, now); return s;
+}
+function sessEnter(s, i, now) {
+  s.i = i; s.stepStart = now; s.alert = false; s.lastBeep = null;
+  if (i >= s.steps.length) { s.done = true; s.end = 0; return; }
+  const dur = s.steps[i].dur; s.end = dur ? now + dur * 1000 : 0;
+  if (s.paused) { s.pausedLeft = dur * 1000; s.pausedElapsed = 0; }   // skipped while paused: stay paused, fresh step
+}
+const sessNext = (s, now) => { sessEnter(s, s.i + 1, now); return s.done ? ['enter', 'finish'] : ['enter']; };
+// A rest found ended past its hold (at least 1s) was missed while away: no alert for it.
+const sessStale = (s, now, holdSec) => s.steps[s.i]?.kind === 'rest' && !s.alert && s.end && now >= s.end + Math.max(holdSec, 1) * 1000;
+function sessTick(s, now, holdSec) {
+  if (s.done || s.paused) return [];
+  if (s.alert) return now >= s.alertUntil ? sessNext(s, now) : [];
+  const st = s.steps[s.i];
+  if (st.dur && now >= s.end) {
+    if (st.kind === 'rest') {
+      if (sessStale(s, now, holdSec)) return sessNext(s, now);
+      s.alert = true; s.alertUntil = s.end + holdSec * 1000;
+      return holdSec === 0 ? ['alert', ...sessNext(s, now)] : ['alert'];
+    }
+    return [st.kind === 'ready' ? 'go' : 'workEnd', ...sessNext(s, now)];
+  }
+  if (st.dur) {
+    const sec = Math.ceil((s.end - now) / 1000);
+    if (sec >= 1 && sec <= 3 && sec !== s.lastBeep) { s.lastBeep = sec; return ['tick']; }
+  }
+  return [];
+}
+const sessTap = (s, now) => s.done ? [] : sessNext(s, now);
+function sessResume(s, now) {          // back from away: advance at most one step, starting it at `now`
+  if (s.done || s.paused) return [];
+  const st = s.steps[s.i];
+  return s.alert || (st.dur && now >= s.end) ? sessNext(s, now) : [];
+}
+function sessPause(s, now) {
+  if (s.done || s.paused || s.alert) return;
+  s.paused = true; s.pausedLeft = s.end ? s.end - now : 0; s.pausedElapsed = now - s.stepStart;
+}
+function sessUnpause(s, now) {
+  if (!s.paused) return;
+  s.paused = false; if (s.end) s.end = now + s.pausedLeft; s.stepStart = now - s.pausedElapsed;
+}
 
 // ---------- navigation ----------
 const MENU_SCREENS = ['timer', 'workouts', 'history', 'settings'];
@@ -497,12 +556,29 @@ function draw(screen, { phase, clock, sub, frac }) {
   el.querySelector('.sub').textContent = sub;
   el.querySelector('.ring-fg').style.strokeDashoffset = CIRC * (1 - Math.max(0, Math.min(1, frac)));
 }
-function setPhase(screen, p, paused) { $('#' + screen).className = `screen${current === screen ? ' on' : ''} p-${p}${paused ? ' paused' : ''}`; }
+function setPhase(screen, p, paused) {      // keeps `alerting` only while the alert phase lasts
+  const el = $('#' + screen), a = p === 'alert' && el.classList.contains('alerting');
+  el.className = `screen${current === screen ? ' on' : ''} p-${p}${paused ? ' paused' : ''}${a ? ' alerting' : ''}`;
+}
 function flash(screen) { const el = $('#' + screen + ' .stage'); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+// Sounds and effects for a session's events; the caller handles 'finish'.
+const sessOn = screen => screen === 'run' ? run?.sess : screen === 'timer' ? qt.sess : null;
+function handleEvents(screen, events) {
+  const s = sessOn(screen);
+  events.forEach(e => {
+    if (e === 'tick') tick();
+    else if (e === 'alert') { beep([0, .22, .44], 990, .3); $('#' + screen).classList.add('alerting'); }
+    else if (e === 'go') beep([0, .22], 990, .3);
+    else if (e === 'workEnd') beep([0], 520, .45);
+    else if (e === 'enter' && s?.steps[s.i]?.kind === 'work') flash(screen);   // the alert or the tap already signalled it
+  });
+}
 
 // ---------- QUICK TIMER (home) ----------
-// phase: idle (before the first set) -> work (counting up) -> rest (counting down) -> work ...
-const qt = { phase: 'idle', set: 1, rest: 90, end: 0, start: 0, lastBeep: null };
+// idle (qt.sess null) -> work 1 (counting up) -> rest -> alert -> work 2 ... -> done; driven by the session engine
+const qt = { rest: 90, sess: null, finished: 0 };
+const stepsQuick = (sets, rest) => Array.from({ length: sets * 2 - 1 }, (_, k) =>
+  k % 2 ? { kind: 'rest', dur: rest } : { kind: 'work', ex: null, set: k / 2 + 1, of: sets, dur: 0 });
 function renderPresets() {
   const P = S().presets;
   $('#presets').innerHTML = P.map((s, i) => `<button class="chip${s === qt.rest ? ' on' : ''}" data-preset="${i}">${fmtChip(s)}</button>`).join('') +
@@ -510,7 +586,11 @@ function renderPresets() {
 }
 function setQRest(s) {
   qt.rest = s; S().rest = s; persist(); renderPresets();
-  if (qt.phase === 'rest') { qt.end = qt.restStart + s * 1000; }
+  const ss = qt.sess;
+  if (ss) {
+    ss.steps.forEach(st => { if (st.kind === 'rest') st.dur = s; });
+    if (ss.steps[ss.i]?.kind === 'rest' && !ss.alert) ss.end = Math.max(Date.now(), ss.stepStart + s * 1000);
+  }
   qDraw();
 }
 $('#presets').addEventListener('click', e => {
@@ -518,21 +598,26 @@ $('#presets').addEventListener('click', e => {
   if (b.id === 'customChip') openSheet(); else setQRest(S().presets[+b.dataset.preset]);
 });
 const qTotal = () => S().qSets;   // sets per exercise on the quick timer
-function qMain() {
-  unlockAudio();
-  if (qt.phase === 'done') return qStop();                                                          // start over
-  if (qt.phase === 'idle') qt.started = Date.now();
-  if (qt.phase === 'rest') { qt.phase = 'work'; qt.set++; qt.start = Date.now(); flash('timer'); } // skip rest
-  else if (qt.set >= qTotal()) {                                                                    // last set done: stop here
-    qt.phase = 'done'; qt.finished = Date.now(); beep([0, .18, .36, .6], 990, .25); flash('timer');
-  }
-  else { qt.phase = 'rest'; qt.restStart = Date.now(); qt.end = qt.restStart + qt.rest * 1000; qt.lastBeep = null; } // set done
+function qEvents(e) {
+  handleEvents('timer', e);
+  if (e.includes('finish')) { qt.finished = Date.now(); beep([0, .18, .36, .6], 990, .25); flash('timer'); }
   qDraw();
 }
-function qStop() { qt.phase = 'idle'; qt.set = 1; qDraw(); }
+function qMain() {
+  unlockAudio();
+  if (qt.sess?.done) return qStop();                                                          // start over
+  if (!qt.sess) { qt.sess = newSession(stepsQuick(qTotal(), qt.rest), Date.now()); return qEvents(['enter']); }
+  qEvents(sessTap(qt.sess, Date.now()));                                                      // set done / skip rest
+}
+function qStop() { qt.sess = null; qDraw(); }
 function qChangeSets(d) {
   S().qSets = Math.max(1, Math.min(20, qTotal() + d)); persist();
-  if (qt.set > qTotal()) qt.set = qTotal();
+  const ss = qt.sess;
+  if (ss && !ss.done) {             // same index layout for any set count: keep i
+    ss.steps = stepsQuick(qTotal(), qt.rest);
+    const last = ss.steps.length - 1;
+    if (ss.i > last) sessEnter(ss, last, Date.now());
+  }
   qDraw();
 }
 $('#qMain').onclick = qMain;
@@ -541,41 +626,40 @@ $('#qStop').onclick = qStop;
 $('#qLess').onclick = () => qChangeSets(-1);
 $('#qMore').onclick = () => qChangeSets(1);
 $('#qAdjust').addEventListener('click', e => {
-  const a = +e.target.dataset.adj; if (!a || qt.phase !== 'rest') return;
-  qt.end = Math.max(Date.now() + 1000, qt.end + a * 1000);
+  const a = +e.target.dataset.adj, ss = qt.sess; if (!a || !ss || ss.alert || ss.steps[ss.i]?.kind !== 'rest') return;
+  ss.end = Math.max(Date.now() + 1000, ss.end + a * 1000);
 });
 function qDraw() {
-  const now = Date.now();
-  if (qt.phase === 'rest') {
-    const left = qt.end - now, total = qt.end - qt.restStart;
-    if (left <= 0) {                    // rest over: next set starts
-      qt.phase = 'work'; qt.set++; qt.start = now; beep([0, .22], 990, .3); flash('timer');
-      return qDraw();
-    }
-    const sec = Math.ceil(left / 1000);
-    if (sec <= 3 && qt.lastBeep !== sec) { qt.lastBeep = sec; tick(); }
-    setPhase('timer', 'rest');
-    draw('timer', { phase: 'Rest', clock: fmtTime(sec), sub: qt.set + 1 === qTotal() ? 'next: last set' : `next: set ${qt.set + 1}`, frac: left / total });
-    $('#qMain').textContent = 'Skip rest ⏭';
-  } else if (qt.phase === 'done') {
+  const now = Date.now(), ss = qt.sess, s = ss?.steps[ss.i];
+  const rest = s?.kind === 'rest', set = !ss ? 1 : ss.done ? qTotal() : rest ? ss.steps[ss.i - 1].set : s.set;
+  const nextSub = () => set + 1 === qTotal() ? 'next: last set' : `next: set ${set + 1}`;
+  if (!ss) {
+    setPhase('timer', 'idle');
+    draw('timer', { phase: 'Ready', clock: 'GO', sub: 'tap to start set 1', frac: 1 });
+    $('#qMain').textContent = 'Start ▶';
+  } else if (ss.done) {
     setPhase('timer', 'work');
-    draw('timer', { phase: 'Done', clock: '✓', sub: `${qTotal()} sets · ${fmtLong((qt.finished - qt.started) / 1000)}`, frac: 1 });
+    draw('timer', { phase: 'Done', clock: '✓', sub: `${qTotal()} sets · ${fmtLong((qt.finished - ss.started) / 1000)}`, frac: 1 });
     $('#qMain').textContent = 'Start over ↺';
+  } else if (ss.alert) {            // time's up: hold, then the engine enters the next set
+    setPhase('timer', 'alert');
+    draw('timer', { phase: "Time's up", clock: 'GO', sub: nextSub(), frac: 0 });
+    $('#qMain').textContent = 'Start now ⏭';
+  } else if (rest) {
+    const left = ss.end - now;
+    setPhase('timer', 'rest');
+    draw('timer', { phase: 'Rest', clock: fmtTime(Math.ceil(left / 1000)), sub: nextSub(), frac: left / (ss.end - ss.stepStart) });
+    $('#qMain').textContent = 'Skip rest ⏭';
   } else {
-    const last = qt.set >= qTotal(), label = last ? 'Last set done ✓' : `Set done · rest ${fmtTime(qt.rest)}`;
-    if (qt.phase === 'work') {
-      setPhase('timer', 'work');
-      draw('timer', { phase: last ? 'Last set' : 'Working', clock: fmtClock((now - qt.start) / 1000), sub: 'tap when the set is done', frac: 1 });
-    } else {
-      setPhase('timer', 'idle');
-      draw('timer', { phase: 'Ready', clock: 'GO', sub: 'tap when the set is done', frac: 1 });
-    }
-    $('#qMain').textContent = label;
+    const last = s.set >= s.of;
+    setPhase('timer', 'work');
+    draw('timer', { phase: last ? 'Last set' : 'Working', clock: fmtClock((now - ss.stepStart) / 1000), sub: 'tap when the set is done', frac: 1 });
+    $('#qMain').textContent = last ? 'Last set done ✓' : `Set done · rest ${fmtTime(qt.rest)}`;
   }
-  $('#qSet').textContent = qt.set;
+  $('#qSet').textContent = set;
   $('#qOf').textContent = qTotal();
-  $('#qAdjust').style.visibility = qt.phase === 'rest' ? 'visible' : 'hidden';
-  $('#qStop').style.visibility = qt.phase === 'idle' ? 'hidden' : 'visible';
+  $('#qAdjust').style.visibility = rest && !ss.alert ? 'visible' : 'hidden';
+  $('#qStop').style.visibility = ss ? 'visible' : 'hidden';
 }
 
 // ---------- custom time sheet ----------
@@ -624,15 +708,19 @@ function renderWorkouts() {
       </div>
       <button class="icon-btn" data-edit="${w.id}" title="Edit" style="font-size:16px">✎</button>
       <button class="icon-btn" data-dup="${w.id}" title="Duplicate" style="font-size:16px">⧉</button>
+      <button class="icon-btn" data-share="${w.id}" title="Export CSV" style="font-size:16px">⇪</button>
     </div>`;
   }).join('') + '<div style="height:70px"></div>'
     : `<div class="empty"><div class="big">🏋️</div>No workouts yet.<br>Tap <b>+</b> to build one.</div>`;
 }
 $('#wlist').addEventListener('click', e => {
-  const t = e.target.closest('[data-start],[data-edit],[data-dup]'); if (!t) return;
+  const t = e.target.closest('[data-start],[data-edit],[data-dup],[data-share]'); if (!t) return;
   if (t.dataset.start) startRun(state.workouts.find(w => w.id === t.dataset.start));
   else if (t.dataset.edit) openEditor(t.dataset.edit);
-  else if (t.dataset.dup) {
+  else if (t.dataset.share) {
+    const w = state.workouts.find(w => w.id === t.dataset.share);
+    shareFile(workoutsToCSV([w]), (w.name || 'workout').replace(/[\\/:*?"<>|]/g, '-') + '.csv', 'text/csv');
+  } else if (t.dataset.dup) {
     const w = structuredClone(state.workouts.find(w => w.id === t.dataset.dup));
     w.id = uid(); w.name += ' (copy)'; w.exercises.forEach(x => x.id = uid());
     state.workouts.push(w); persist(); renderWorkouts();
@@ -650,11 +738,27 @@ function openEditor(id) {
   renderEditor(); go('edit');
   if (draft.isNew) $('#wname').focus();
 }
+const isLinked = i => { const X = draft.exercises; return !!(TYPES[X[i].type] || TYPES.Standard).link && i < X.length - 1; };
+function exNote(i) {
+  const e = draft.exercises[i], t = TYPES[e.type] || TYPES.Standard;
+  return isLinked(i) ? `<div class="link-note">↳ ${esc(e.type.toLowerCase())}: runs back-to-back with #${i + 2}, using this exercise's rest between rounds</div>`
+                     : t.hint ? `<div class="hint">${esc(t.hint)}</div>` : '';
+}
+function renderTotal() {
+  const X = draft.exercises, est = buildSteps(draft).reduce((a, s) => a + (s.dur || 40), 0);
+  $('#wtotal').textContent = `${X.length} exercise${X.length === 1 ? '' : 's'} · ~${fmtLong(est)} · times as 90 or 1:30`;
+}
+// updates only the link state and note of row i; never touches the inputs, so focus survives
+function refreshExRow(i) {
+  const row = $(`#exlist .ex[data-i="${i}"]`); if (!row) return;
+  row.classList.toggle('linked', isLinked(i));
+  row.querySelector('.link-note, .hint')?.remove();
+  row.insertAdjacentHTML('beforeend', exNote(i));
+}
 function renderEditor() {
   const X = draft.exercises;
   $('#exlist').innerHTML = X.map((e, i) => {
-    const t = TYPES[e.type] || TYPES.Standard, linked = t.link && i < X.length - 1;
-    return `<div class="ex${linked ? ' linked' : ''}" data-i="${i}">
+    return `<div class="ex${isLinked(i) ? ' linked' : ''}" data-i="${i}">
       <div class="ex-top">
         <div class="ex-num">${i + 1}</div>
         <input data-f="name" value="${esc(e.name)}" placeholder="Exercise name">
@@ -672,20 +776,18 @@ function renderEditor() {
         <div class="field"><label>Rest after</label><input data-f="after" value="${fmtField(e.after)}" placeholder="0"></div>
         <div class="field wide"><label>Notes</label><input data-f="notes" value="${esc(e.notes)}" placeholder="Weight, cues, machine setting… (optional)"></div>
       </div>
-      ${linked ? `<div class="link-note">↳ ${esc(e.type.toLowerCase())}: runs back-to-back with #${i + 2}, using this exercise's rest between rounds</div>`
-               : t.hint ? `<div class="hint">${esc(t.hint)}</div>` : ''}
+      ${exNote(i)}
     </div>`;
   }).join('');
-  const est = buildSteps(draft).reduce((a, s) => a + (s.dur || 40), 0);
-  $('#wtotal').textContent = `${X.length} exercise${X.length === 1 ? '' : 's'} · ~${fmtLong(est)} · times as 90 or 1:30`;
+  renderTotal();
 }
 $('#exlist').addEventListener('change', e => {
   const f = e.target.dataset.f; if (!f) return;
   const i = +e.target.closest('.ex').dataset.i, x = draft.exercises[i];
-  if (f === 'sets') x.sets = Math.max(1, Math.min(20, parseInt(e.target.value) || 1));
-  else if (['work', 'rest', 'after'].includes(f)) x[f] = parseTime(e.target.value);
+  if (f === 'sets') e.target.value = x.sets = Math.max(1, Math.min(20, parseInt(e.target.value) || 1));
+  else if (['work', 'rest', 'after'].includes(f)) e.target.value = fmtField(x[f] = parseTime(e.target.value));
   else x[f] = e.target.value;
-  if (['type', 'sets', 'work', 'rest', 'after'].includes(f)) renderEditor();
+  if (['type', 'sets', 'work', 'rest', 'after'].includes(f)) { refreshExRow(i); renderTotal(); }
 });
 $('#exlist').addEventListener('input', e => { if (['name', 'reps', 'notes'].includes(e.target.dataset.f)) draft.exercises[+e.target.closest('.ex').dataset.i][e.target.dataset.f] = e.target.value; });
 $('#exlist').addEventListener('click', e => {
@@ -706,7 +808,7 @@ $('#addEx').onclick = () => {
 $('#wname').oninput = e => draft.name = e.target.value;
 function commitDraft() {
   document.activeElement?.blur?.();                 // flush the field being typed in
-  draft.exercises = draft.exercises.filter(x => x.name.trim() || draft.exercises.length === 1);
+  draft.exercises.forEach((x, i) => { x.name = x.name.trim() || `Exercise ${i + 1}`; });
   const { isNew, ...w } = draft; w.name = w.name.trim() || 'Untitled workout';
   const i = state.workouts.findIndex(x => x.id === w.id);
   if (i >= 0) state.workouts[i] = w; else state.workouts.push(w);
@@ -724,7 +826,7 @@ $('#delW').onclick = () => {
 // ---------- building a workout's timeline ----------
 // Groups consecutive exercises joined by Superset/Giant set, then walks round by round.
 function buildSteps(w) {
-  const X = w.exercises.filter(x => x.name.trim() || w.exercises.length === 1);
+  const X = w.exercises;
   const groups = []; let g = [];
   X.forEach((x, i) => { g.push(x); if (!(TYPES[x.type]?.link && i < X.length - 1)) { groups.push(g); g = []; } });
   const steps = S().ready ? [{ kind: 'ready', dur: S().ready }] : [];
@@ -741,34 +843,33 @@ function buildSteps(w) {
 }
 
 // ---------- RUN (guided workout) ----------
-let run = null;
+let run = null;   // { w, sess }
 function startRun(w) {
-  if (!w || !w.exercises.length) return;
-  run = { w, steps: buildSteps(w), i: 0, started: Date.now(), paused: false };
-  go('run'); $('#runName').textContent = w.name;
-  unlockAudio(); enterStep(0);
+  if (!w) return;
+  if (!w.exercises.length) return ask('This workout has no exercises yet. Add one in the editor.', 'OK', null);
+  run = { w, sess: newSession(buildSteps(w), Date.now()) };
+  go('run'); $('#runName').textContent = w.name; $('#pauseBtn').textContent = '⏸';
+  unlockAudio(); runEvents(['enter']);
 }
-function enterStep(i) {
-  run.i = i;
-  const s = run.steps[i];
-  if (!s) return finish();
-  run.stepStart = Date.now(); run.lastBeep = null;
-  run.end = s.dur ? Date.now() + s.dur * 1000 : 0;
-  if (run.paused) { run.pausedLeft = s.dur * 1000; run.pausedElapsed = 0; }
-  if (s.kind === 'work') { flash('run'); if (i > 0) beep([0, .22], 990, .3); }
-  renderRun();
+function runEvents(e) {          // effects, then finish or redraw
+  handleEvents('run', e);
+  if (e.includes('finish')) return finish();
+  if (e.includes('enter') || e.includes('alert')) renderRun();
+  runDraw();
 }
-const nextStep = () => enterStep(run.i + 1);
-function prevStep() { enterStep((Date.now() - run.stepStart) > 2500 ? run.i : Math.max(0, run.i - 1)); }
+const nextStep = () => runEvents(sessTap(run.sess, Date.now()));
+function prevStep() {
+  const ss = run.sess, now = Date.now();
+  sessEnter(ss, now - ss.stepStart > 2500 ? ss.i : Math.max(0, ss.i - 1), now); runEvents(['enter']);
+}
 function togglePause() {
-  if (!run.paused) { run.paused = true; run.pausedLeft = run.end ? run.end - Date.now() : 0; run.pausedElapsed = Date.now() - run.stepStart; }
-  else { run.paused = false; if (run.end) run.end = Date.now() + run.pausedLeft; run.stepStart = Date.now() - (run.pausedElapsed || 0); }
-  $('#pauseBtn').textContent = run.paused ? '▶' : '⏸';
-  renderRun();
+  const ss = run.sess; (ss.paused ? sessUnpause : sessPause)(ss, Date.now());   // no-op during the alert
+  $('#pauseBtn').textContent = ss.paused ? '▶' : '⏸';
+  renderRun(); runDraw();
 }
 function exitRun() { run = null; go('workouts'); }
 function finish() {
-  const secs = (Date.now() - run.started) / 1000, sets = run.steps.filter(s => s.kind === 'work').length;
+  const secs = (Date.now() - run.sess.started) / 1000, sets = run.sess.steps.filter(s => s.kind === 'work').length;
   state.history.push({ name: run.w.name, t: Date.now(), secs, sets }); persist();
   beep([0, .18, .36, .6], 990, .25);
   $('#doneName').textContent = run.w.name;
@@ -780,8 +881,9 @@ $('#rMain').onclick = () => nextStep();
 $('#prevBtn').onclick = prevStep;
 $('#pauseBtn').onclick = togglePause;
 function stopRun() {
-  const wasPaused = run.paused; if (!wasPaused) togglePause();   // freeze the clock while deciding
-  ask('Stop this workout?', 'Stop', exitRun, () => { if (run && !wasPaused) togglePause(); });
+  const ss = run.sess, was = ss.paused; if (!was) togglePause();   // freeze the clock while deciding (not during the alert)
+  const froze = !was && ss.paused;
+  ask('Stop this workout?', 'Stop', exitRun, () => { if (run && froze && ss.paused) togglePause(); });
 }
 $('#quit').onclick = stopRun;
 $('#rStop').onclick = stopRun;
@@ -800,16 +902,16 @@ $('#confirmYes').onclick = () => closeAsk(true);
 $('#confirmNo').onclick = () => closeAsk(false);
 $('#confirmScrim').onclick = e => { if (e.target.id === 'confirmScrim') closeAsk(false); };
 $('#rAdjust').addEventListener('click', e => {
-  const a = +e.target.dataset.adj, s = run && run.steps[run.i]; if (!a || !s || !s.dur) return;
-  if (run.paused) run.pausedLeft = Math.max(1000, run.pausedLeft + a * 1000);
-  else run.end = Math.max(Date.now() + 1000, run.end + a * 1000);
+  const a = +e.target.dataset.adj, ss = run?.sess, s = ss?.steps[ss.i]; if (!a || !s || !s.dur || ss.alert) return;
+  if (ss.paused) ss.pausedLeft = Math.max(1000, ss.pausedLeft + a * 1000);
+  else ss.end = Math.max(Date.now() + 1000, ss.end + a * 1000);
   s.dur = Math.max(1, s.dur + a);
 });
 
-const nextWorkAfter = i => run.steps.slice(i + 1).find(s => s.kind === 'work') || null;
+const nextWorkAfter = i => run.sess.steps.slice(i + 1).find(s => s.kind === 'work') || null;
 const describe = s => s ? `<b>${esc(s.ex.name || 'Exercise')}</b> · set ${s.set} of ${s.of}${s.ex.reps ? ` · ${esc(s.ex.reps)} reps` : ''}` : '<b>Finish</b>';
 function renderRun() {
-  const s = run.steps[run.i], focus = s.kind === 'work' ? s : nextWorkAfter(run.i);
+  const ss = run.sess, s = ss.steps[ss.i], focus = s.kind === 'work' ? s : nextWorkAfter(ss.i);
   if (focus) {
     const x = focus.ex;
     $('#exTitle').textContent = x.name || 'Exercise';
@@ -822,36 +924,42 @@ function renderRun() {
     $('#setDots').innerHTML = Array.from({ length: focus.of }, (_, k) => `<i class="${k + 1 < focus.set ? 'done' : k + 1 === focus.set ? 'cur' : ''}"></i>`).join('');
     $('#tip').textContent = s.kind === 'work' ? (TYPES[x.type]?.hint || '') : '';
   }
-  $('#rMain').textContent = s.kind === 'work' ? (s.dur ? 'Skip ⏭' : 'Set done ✓') : s.kind === 'rest' ? 'Skip rest ⏭' : 'Start now';
-  $('#rAdjust').style.visibility = s.dur && s.kind !== 'ready' ? 'visible' : 'hidden';
-  const after = nextWorkAfter(run.i);
+  $('#rMain').textContent = ss.alert ? 'Start now ⏭' : s.kind === 'work' ? (s.dur ? 'Skip ⏭' : 'Set done ✓') : s.kind === 'rest' ? 'Skip rest ⏭' : 'Start now';
+  $('#rAdjust').style.visibility = s.dur && s.kind !== 'ready' && !ss.alert ? 'visible' : 'hidden';
+  const after = nextWorkAfter(ss.i);
   $('#next').innerHTML = `${s.kind === 'work' ? 'Next' : s.kind === 'rest' ? 'Up next' : 'First'}: ${describe(after)}`;
-  const nWork = run.steps.filter(x => x.kind === 'work').length, doneWork = run.steps.slice(0, run.i).filter(x => x.kind === 'work').length;
+  const nWork = ss.steps.filter(x => x.kind === 'work').length, doneWork = ss.steps.slice(0, ss.i).filter(x => x.kind === 'work').length;
   $('#prog').style.width = (doneWork / nWork * 100) + '%';
 }
 function runDraw() {
-  const s = run.steps[run.i], now = Date.now();
-  const label = { ready: 'Get ready', work: s.dur ? 'Work' : 'Go', rest: s.between ? 'Rest · next exercise' : 'Rest' }[s.kind];
-  setPhase('run', s.kind, run.paused);
-  if (s.dur) {
-    const left = run.paused ? run.pausedLeft : run.end - now, sec = Math.ceil(left / 1000);
-    draw('run', { phase: run.paused ? 'Paused' : label, clock: fmtTime(sec), sub: s.kind === 'ready' ? '' : `of ${fmtTime(s.dur)}`, frac: left / (s.dur * 1000) });
-    if (!run.paused) {
-      if (sec <= 3 && sec >= 1 && run.lastBeep !== sec) { run.lastBeep = sec; tick(); }
-      if (left <= 0) { if (s.kind === 'work') beep([0], 520, .45); nextStep(); return; }
-    }
+  const ss = run.sess, s = ss.steps[ss.i], now = Date.now();
+  if (ss.alert) {                     // time's up: hold, then the engine enters the next step
+    const n = ss.steps[ss.i + 1];
+    setPhase('run', 'alert');
+    draw('run', { phase: "Time's up", clock: 'GO', sub: `next: ${s.between ? n.ex.name || 'Exercise' : `set ${n.set}`}`, frac: 0 });
   } else {
-    const el = run.paused ? run.pausedElapsed : now - run.stepStart;
-    draw('run', { phase: run.paused ? 'Paused' : label, clock: fmtClock(el / 1000), sub: 'tap when done', frac: 1 });
+    const label = { ready: 'Get ready', work: s.dur ? 'Work' : 'Go', rest: s.between ? 'Rest · next exercise' : 'Rest' }[s.kind];
+    setPhase('run', s.kind, ss.paused);
+    if (s.dur) {
+      const left = ss.paused ? ss.pausedLeft : ss.end - now;
+      draw('run', { phase: ss.paused ? 'Paused' : label, clock: fmtTime(Math.ceil(left / 1000)), sub: s.kind === 'ready' ? '' : `of ${fmtTime(s.dur)}`, frac: left / (s.dur * 1000) });
+    } else {
+      const el = ss.paused ? ss.pausedElapsed : now - ss.stepStart;
+      draw('run', { phase: ss.paused ? 'Paused' : label, clock: fmtClock(el / 1000), sub: 'tap when done', frac: 1 });
+    }
   }
-  $('#elapsed').textContent = fmtClock((now - run.started) / 1000);
+  $('#elapsed').textContent = fmtClock((now - ss.started) / 1000);
 }
 
 // One clock for both timers. setInterval (not requestAnimationFrame) so rests still end and beep
 // while the window is minimized or behind other windows. The quick timer keeps running while you browse menus.
+// While hidden, only a running rest ticks (so its alert still sounds); anything else, an alert or a rest missed past its
+// hold waits, and onVisible() starts the next step on return: a work set never starts while nobody is looking.
+const idle = ss => document.visibilityState === 'hidden' && (ss.alert || ss.steps[ss.i]?.kind !== 'rest' || sessStale(ss, Date.now(), S().hold));
 setInterval(() => {
-  if (run) runDraw();
-  if (qt.phase === 'rest' || current === 'timer') qDraw();
+  if (run && !idle(run.sess)) runEvents(sessTick(run.sess, Date.now(), S().hold));
+  if (qt.sess && !qt.sess.done) { if (!idle(qt.sess)) qEvents(sessTick(qt.sess, Date.now(), S().hold)); }
+  else if (current === 'timer') qDraw();
 }, 100);
 
 // ---------- HISTORY ----------
@@ -867,8 +975,8 @@ function renderSettings() {
   const s = S();
   $('#sName').value = s.name;
   $$('.presetIn').forEach(i => i.value = fmtTime(s.presets[+i.dataset.p]));
-  $('#sReady').value = s.ready; $('#sSound').checked = s.sound; $('#sTicks').checked = s.ticks;
-  $('#sVol').value = s.volume; $('#sTop').checked = s.onTop;
+  $('#sReady').value = s.ready; $('#sHold').value = s.hold; $('#sSound').checked = s.sound; $('#sTicks').checked = s.ticks;
+  $('#sAwake').checked = s.keepAwake; $('#sVol').value = s.volume; $('#sTop').checked = s.onTop;
 }
 $('#sName').oninput = e => { S().name = e.target.value; renderHello(); persist(); };
 $$('.presetIn').forEach(i => i.onchange = e => {
@@ -876,8 +984,10 @@ $$('.presetIn').forEach(i => i.onchange = e => {
   e.target.value = fmtTime(S().presets[+e.target.dataset.p]); persist(); renderPresets();
 });
 $('#sReady').onchange = e => { S().ready = Math.max(0, Math.min(30, parseInt(e.target.value) || 0)); e.target.value = S().ready; persist(); };
+$('#sHold').onchange = e => { S().hold = Math.max(0, Math.min(5, Math.round((parseFloat(e.target.value) || 0) * 2) / 2)); e.target.value = S().hold; persist(); };
 $('#sSound').onchange = e => { S().sound = e.target.checked; persist(); };
 $('#sTicks').onchange = e => { S().ticks = e.target.checked; persist(); };
+$('#sAwake').onchange = e => { S().keepAwake = e.target.checked; persist(); updateWake(); };
 $('#sVol').oninput = e => { S().volume = +e.target.value; };
 $('#sVol').onchange = () => { persist(); beep([0], 880, .2); };
 $('#sTop').onchange = e => { S().onTop = e.target.checked; persist(); api()?.set_on_top(S().onTop); };
@@ -888,14 +998,37 @@ $('#clearHist').onclick = () => ask('Clear all workout history?', 'Clear', () =>
 $('#backupBtn').onclick = async () => {
   const json = JSON.stringify(state, null, 2), name = `workout-timer-backup-${new Date().toISOString().slice(0, 10)}.json`;
   if (api()) return api().export_backup(json, name);
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([json], { type: 'application/json' })), download: name });
-  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  downloadFile(json, name, 'application/json');
 };
+function downloadFile(text, name, type) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text], { type })), download: name });
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function shareFile(text, name, type) {
+  if (api()) return api().export_csv(text, name);
+  const file = new File([text], name, { type });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { return await navigator.share({ files: [file], title: name }); }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  downloadFile(text, name, type);
+}
+async function pickTextFile(accept) {
+  if (api()) return api().import_csv();
+  return new Promise(res => {
+    const inp = Object.assign(document.createElement('input'), { type: 'file', accept });
+    inp.onchange = () => res(inp.files[0]?.arrayBuffer().then(decodeText) ?? null);
+    inp.click();
+  });
+}
+function decodeText(buf) {             // UTF-8, else Windows-1252 (Excel's "CSV (Comma delimited)")
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return new TextDecoder('windows-1252').decode(buf); }
+}
 function restoreFrom(text) {
   let s; try { s = JSON.parse(text); } catch { return ask("That file isn't a Workout Timer backup.", 'OK', null); }
   if (!s || !Array.isArray(s.workouts)) return ask("That file isn't a Workout Timer backup.", 'OK', null);
   ask(`Load ${s.workouts.length} workout${s.workouts.length === 1 ? '' : 's'} from the backup? This replaces what's on this device.`, 'Load', () => {
-    state = { workouts: s.workouts, history: s.history || [], settings: { ...DEFAULT_SETTINGS, ...(s.settings || {}) } };
+    state = { workouts: s.workouts, history: s.history || [], settings: fixSettings(s.settings) };
     qt.rest = S().rest; persist(); renderHello(); renderPresets(); renderSettings(); qStop();
   });
 }
@@ -906,21 +1039,91 @@ $('#restoreBtn').onclick = async () => {
   inp.click();
 };
 
-// ---------- keep the screen awake while a timer is going (phones) ----------
+// ---------- CSV ----------
+const CSV_COLS = ['workout', 'exercise', 'type', 'sets', 'reps', 'set_time', 'rest', 'rest_after', 'notes'];
+function parseCSV(text) {                 // RFC 4180; each row also carries .ln, its 1-based start line in the file
+  text = String(text).replace(/^﻿/, '');
+  const first = text.split(/\r?\n/)[0]; let q = false, sc = 0, cc = 0;
+  for (const c of first) { if (c === '"') q = !q; else if (!q) { if (c === ';') sc++; else if (c === ',') cc++; } }
+  const d = sc > cc ? ';' : ',', rows = []; let row = [], cell = '', ln = 1, start = 1; q = false;
+  const endRow = () => { row.push(cell); cell = ''; if (row.some(c => c.trim())) { row.ln = start; rows.push(row); } row = []; start = ln; };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else { if (c === '\n') ln++; cell += c; } }
+    else if (c === '"') q = true;
+    else if (c === d) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; ln++; endRow(); }
+    else cell += c;
+  }
+  if (cell || row.length) endRow();
+  return rows;
+}
+function uniqueName(name, taken) {
+  let n = name, i = 2; while (taken.has(n)) n = `${name} (${i++})`; return n;
+}
+const csvGuard = s => /^[=+@\t]/.test(s) ? "'" + s : s;
+const csvUnguard = s => /^'[=+@\t]/.test(s) ? s.slice(1) : s;
+function csvToWorkouts(text, takenNames) {
+  const rows = parseCSV(text), head = (rows[0] || []).map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
+  const col = Object.fromEntries(CSV_COLS.map(c => [c, head.indexOf(c)]));
+  if (col.workout < 0) return { workouts: [], problems: [], error: "No 'workout' column in the header." };
+  const problems = [], groups = new Map(), taken = new Set(takenNames);
+  for (const r of rows.slice(1)) {
+    const get = c => col[c] < 0 ? '' : (r[col[c]] ?? '').trim(), txt = c => csvUnguard(get(c)), p = m => problems.push(`row ${r.ln}: ${m}`);
+    const wn = txt('workout'); if (!wn) { p('no workout name, skipped'); continue; }
+    if (!groups.has(wn)) groups.set(wn, []);
+    const list = groups.get(wn);
+    let sets = 3, s = get('sets');
+    if (s) {
+      const n = Number(s);
+      if (!Number.isInteger(n)) p(`sets "${s}" isn't a number, used 3`);
+      else if (n < 1 || n > 20) { sets = n < 1 ? 1 : 20; p(`sets ${n} out of range, used ${sets}`); }
+      else sets = n;
+    }
+    const tc = txt('type'), type = !tc ? 'Standard' : Object.keys(TYPES).find(k => k.toLowerCase() === tc.toLowerCase());
+    if (!type) p(`unknown type "${tc}", used Standard`);
+    const t = (c, d) => {
+      const v = get(c); if (!v) return d;
+      if (/^(\d+|\d+:\d{1,2}|\d+(\.\d+)?m)$/i.test(v)) return parseTime(v);
+      p(`${c} "${v}" not understood, used ${fmtTime(d)}`); return d;
+    };
+    list.push(ex({ name: txt('exercise') || `Exercise ${list.length + 1}`, type: type || 'Standard', sets, reps: txt('reps'), work: t('set_time', 0), rest: t('rest', 60), after: t('rest_after', 120), notes: txt('notes') }));
+  }
+  const workouts = [...groups].map(([n, exercises]) => { const name = uniqueName(n, taken); taken.add(name); return { id: uid(), name, exercises }; });
+  return { workouts, problems, error: null };
+}
+function workoutsToCSV(workouts) {
+  const cell = s => /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s, out = [CSV_COLS.join(',')];
+  for (const w of workouts) for (const e of w.exercises)
+    out.push([csvGuard(w.name), csvGuard(e.name), csvGuard(e.type), e.sets, csvGuard(String(e.reps ?? '')), fmtTime(e.work), fmtTime(e.rest), fmtTime(e.after), csvGuard(e.notes || '')].map(v => cell(String(v))).join(','));
+  return '﻿' + out.join('\r\n') + '\r\n';
+}
+
+// ---------- keep the screen awake while the app is open (phones) ----------
 let wake = null, wakeBusy = false;
 async function updateWake() {
   if (!('wakeLock' in navigator) || wakeBusy) return;
-  const want = !!run || (qt.phase !== 'idle' && qt.phase !== 'done');
   wakeBusy = true;
   try {
-    if (want && !wake && document.visibilityState === 'visible') {
-      wake = await navigator.wakeLock.request('screen');
-      wake.addEventListener('release', () => { wake = null; });
-    } else if (!want && wake) { await wake.release(); wake = null; }
+    if (S().keepAwake && document.visibilityState === 'visible' && !wake) {
+      const w = wake = await navigator.wakeLock.request('screen');
+      w.addEventListener('release', () => { if (wake === w) { wake = null; updateWake(); } });
+    } else if (!S().keepAwake && wake) { const w = wake; wake = null; await w.release(); }
   } catch { wake = null; }
   wakeBusy = false;
 }
 setInterval(updateWake, 1000);
+updateWake();
+document.addEventListener('pointerdown', updateWake);
+// Back in the app: finish the rest that was running (never a work set), without beep or alert, then redraw.
+function onVisible() {
+  if (document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  if (run) runEvents(sessResume(run.sess, now));
+  if (qt.sess && !qt.sess.done) qEvents(sessResume(qt.sess, now));
+  updateWake();
+}
+document.addEventListener('visibilitychange', onVisible);
 
 // ---------- web app: offline support + ask the browser not to clear our data ----------
 if (!api() && location.protocol.startsWith('http') && 'serviceWorker' in navigator) {
@@ -977,6 +1180,18 @@ function beep(delays, freq = 880, len = .2) {
 // pywebview injects its API shortly after load; fall back to browser storage if it never shows up.
 if (api()) loadState();
 else { window.addEventListener('pywebviewready', loadState); setTimeout(() => { if (!api()) loadState(); }, 700); }
+$('#csvExport').onclick = () => shareFile(workoutsToCSV(state.workouts), `workouts-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv');
+$('#csvImport').onclick = async () => {
+  let text; try { text = await pickTextFile('.csv,text/csv'); } catch { return ask("Couldn't read that file.", 'OK', null); }
+  if (text == null) return;
+  const { workouts, problems, error } = csvToWorkouts(text, state.workouts.map(w => w.name));
+  if (error) return ask(error, 'OK', null);
+  const n = workouts.reduce((a, w) => a + w.exercises.length, 0), more = problems.length - 8;
+  const list = problems.length ? '\n\n' + problems.slice(0, 8).join('\n') + (more > 0 ? `\n…and ${more} more` : '') : '';
+  if (!workouts.length) return ask('Nothing to import.' + list, 'OK', null);
+  ask(`Add ${workouts.length} workout${workouts.length === 1 ? '' : 's'} (${n} exercise${n === 1 ? '' : 's'})?` + list,
+    'Add', () => { state.workouts.push(...workouts); persist(); renderWorkouts(); });
+};
 </script>
 </body>
 </html>

@@ -94,3 +94,17 @@ test('timed work end, ready end, pause', async () => {
     o.g = sessTick(r, 5000, 2.5); o.ri = r.i; return o; }`),
     { w: ['workEnd', 'enter'], i: 3, p: [], end: 128000, g: ['go', 'enter'], ri: 1 });
 });
+
+test('resume while paused does nothing', async () => {
+  assert.deepEqual(await run(`() => {
+    const s = newSession(T, 0); sessTap(s, 0); sessPause(s, 5000);
+    return { e: sessResume(s, 180000), i: s.i, paused: s.paused }; }`), { e: [], i: 1, paused: true });
+});
+
+test('tap while paused advances, stays paused, unpause starts the step fresh', async () => {
+  assert.deepEqual(await run(`() => {
+    const s = newSession(T, 0); sessTap(s, 0); sessPause(s, 5000);
+    const o = { e: sessTap(s, 6000), i: s.i, paused: s.paused };
+    sessUnpause(s, 8000); o.end = s.end; o.ss = s.stepStart; o.paused2 = s.paused; return o; }`),
+    { e: ['enter'], i: 2, paused: true, end: 53000, ss: 8000, paused2: false });
+});

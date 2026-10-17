@@ -466,6 +466,7 @@ function sessEnter(s, i, now) {
   s.i = i; s.stepStart = now; s.alert = false; s.lastBeep = null;
   if (i >= s.steps.length) { s.done = true; s.end = 0; return; }
   const dur = s.steps[i].dur; s.end = dur ? now + dur * 1000 : 0;
+  if (s.paused) { s.pausedLeft = dur * 1000; s.pausedElapsed = 0; }   // skipped while paused: stay paused, fresh step
 }
 const sessNext = (s, now) => { sessEnter(s, s.i + 1, now); return s.done ? ['enter', 'finish'] : ['enter']; };
 function sessTick(s, now, holdSec) {
@@ -487,7 +488,7 @@ function sessTick(s, now, holdSec) {
 }
 const sessTap = (s, now) => s.done ? [] : sessNext(s, now);
 function sessResume(s, now) {          // back from away: advance at most one step, starting it at `now`
-  if (s.done) return [];
+  if (s.done || s.paused) return [];
   const st = s.steps[s.i];
   return s.alert || (st.dur && now >= s.end) ? sessNext(s, now) : [];
 }

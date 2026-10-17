@@ -356,6 +356,7 @@
       <div class="row"><div class="lbl">Sounds</div><label class="switch"><input type="checkbox" id="sSound"><span></span></label></div>
       <div class="row"><div class="lbl">3-2-1 countdown beeps</div><label class="switch"><input type="checkbox" id="sTicks"><span></span></label></div>
       <div class="row"><div class="lbl">Volume</div><input type="range" id="sVol" min="5" max="100" style="width:150px;padding:0;accent-color:var(--work)"></div>
+      <div class="row"><div class="lbl">Keep screen on<small>While the app is open</small></div><label class="switch"><input type="checkbox" id="sAwake"><span></span></label></div>
       <div class="row" id="onTopRow"><div class="lbl">Keep window on top<small>Stays visible over other windows</small></div><label class="switch"><input type="checkbox" id="sTop"><span></span></label></div>
     </div>
     <div class="section-title">Data</div>
@@ -930,6 +931,7 @@ function runDraw() {
 // One clock for both timers. setInterval (not requestAnimationFrame) so rests still end and beep
 // while the window is minimized or behind other windows. The quick timer keeps running while you browse menus.
 setInterval(() => {
+  if (document.visibilityState === 'hidden') return;   // onVisible() catches up on return
   if (run) runEvents(sessTick(run.sess, Date.now(), S().hold));
   if (qt.sess && !qt.sess.done) qEvents(sessTick(qt.sess, Date.now(), S().hold));
   else if (current === 'timer') qDraw();
@@ -949,7 +951,7 @@ function renderSettings() {
   $('#sName').value = s.name;
   $$('.presetIn').forEach(i => i.value = fmtTime(s.presets[+i.dataset.p]));
   $('#sReady').value = s.ready; $('#sHold').value = s.hold; $('#sSound').checked = s.sound; $('#sTicks').checked = s.ticks;
-  $('#sVol').value = s.volume; $('#sTop').checked = s.onTop;
+  $('#sAwake').checked = s.keepAwake; $('#sVol').value = s.volume; $('#sTop').checked = s.onTop;
 }
 $('#sName').oninput = e => { S().name = e.target.value; renderHello(); persist(); };
 $$('.presetIn').forEach(i => i.onchange = e => {
@@ -960,6 +962,7 @@ $('#sReady').onchange = e => { S().ready = Math.max(0, Math.min(30, parseInt(e.t
 $('#sHold').onchange = e => { S().hold = Math.max(0, Math.min(5, Math.round((parseFloat(e.target.value) || 0) * 2) / 2)); e.target.value = S().hold; persist(); };
 $('#sSound').onchange = e => { S().sound = e.target.checked; persist(); };
 $('#sTicks').onchange = e => { S().ticks = e.target.checked; persist(); };
+$('#sAwake').onchange = e => { S().keepAwake = e.target.checked; persist(); updateWake(); };
 $('#sVol').oninput = e => { S().volume = +e.target.value; };
 $('#sVol').onchange = () => { persist(); beep([0], 880, .2); };
 $('#sTop').onchange = e => { S().onTop = e.target.checked; persist(); api()?.set_on_top(S().onTop); };
@@ -988,21 +991,31 @@ $('#restoreBtn').onclick = async () => {
   inp.click();
 };
 
-// ---------- keep the screen awake while a timer is going (phones) ----------
+// ---------- keep the screen awake while the app is open (phones) ----------
 let wake = null, wakeBusy = false;
 async function updateWake() {
   if (!('wakeLock' in navigator) || wakeBusy) return;
-  const want = !!run || !!(qt.sess && !qt.sess.done);
   wakeBusy = true;
   try {
-    if (want && !wake && document.visibilityState === 'visible') {
-      wake = await navigator.wakeLock.request('screen');
-      wake.addEventListener('release', () => { wake = null; });
-    } else if (!want && wake) { await wake.release(); wake = null; }
+    if (S().keepAwake && document.visibilityState === 'visible' && !wake) {
+      const w = wake = await navigator.wakeLock.request('screen');
+      w.addEventListener('release', () => { if (wake === w) { wake = null; updateWake(); } });
+    } else if (!S().keepAwake && wake) { const w = wake; wake = null; await w.release(); }
   } catch { wake = null; }
   wakeBusy = false;
 }
 setInterval(updateWake, 1000);
+updateWake();
+document.addEventListener('pointerdown', updateWake);
+// Back in the app: finish the rest that was running (never a work set), without beep or alert, then redraw.
+function onVisible() {
+  if (document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  if (run) runEvents(sessResume(run.sess, now));
+  if (qt.sess && !qt.sess.done) qEvents(sessResume(qt.sess, now));
+  updateWake();
+}
+document.addEventListener('visibilitychange', onVisible);
 
 // ---------- web app: offline support + ask the browser not to clear our data ----------
 if (!api() && location.protocol.startsWith('http') && 'serviceWorker' in navigator) {

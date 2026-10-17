@@ -6,7 +6,7 @@ const APP = 'file://' + path.resolve(__dirname, '..', 'src', 'ui.html');
 // Stand-in for the Screen Wake Lock API: records calls and lets tests simulate the OS releasing the lock.
 function wakeStub() {
   window.__wake = { requests: 0, held: false, sentinel: null };
-  navigator.wakeLock = {
+  Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: {
     request() {
       window.__wake.requests++; window.__wake.held = true;
       const ls = {};
@@ -19,7 +19,7 @@ function wakeStub() {
       window.__wake.sentinel = sentinel;
       return Promise.resolve(sentinel);
     },
-  };
+  } });
 }
 
 // Fresh browser + page with a fake clock; optionally seeds localStorage['wt-state'] with `state`.

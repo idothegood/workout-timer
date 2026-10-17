@@ -456,6 +456,50 @@ const fmtLong = s => { s = Math.round(s); const m = Math.floor(s/60); return m ?
 const fmtChip = s => s < 60 ? `${s}s` : s % 60 ? fmtTime(s) : `${s/60} min`;
 const fmtField = s => s ? (s >= 60 ? fmtTime(s) : String(s)) : '';
 
+// ---------- session engine ----------
+// Pure state machine shared by the guided run and the quick timer; `now` is always passed in. Each call returns events.
+function newSession(steps, now) {
+  const s = { steps, i: 0, alert: false, alertUntil: 0, stepStart: now, end: 0, paused: false, pausedLeft: 0, pausedElapsed: 0, lastBeep: null, started: now, done: false };
+  sessEnter(s, 0, now); return s;
+}
+function sessEnter(s, i, now) {
+  s.i = i; s.stepStart = now; s.alert = false; s.lastBeep = null;
+  if (i >= s.steps.length) { s.done = true; s.end = 0; return; }
+  const dur = s.steps[i].dur; s.end = dur ? now + dur * 1000 : 0;
+}
+const sessNext = (s, now) => { sessEnter(s, s.i + 1, now); return s.done ? ['enter', 'finish'] : ['enter']; };
+function sessTick(s, now, holdSec) {
+  if (s.done || s.paused) return [];
+  if (s.alert) return now >= s.alertUntil ? sessNext(s, now) : [];
+  const st = s.steps[s.i];
+  if (st.dur && now >= s.end) {
+    if (st.kind === 'rest') {
+      s.alert = true; s.alertUntil = s.end + holdSec * 1000;
+      return holdSec === 0 ? ['alert', ...sessNext(s, now)] : ['alert'];
+    }
+    return [st.kind === 'ready' ? 'go' : 'workEnd', ...sessNext(s, now)];
+  }
+  if (st.dur) {
+    const sec = Math.ceil((s.end - now) / 1000);
+    if (sec >= 1 && sec <= 3 && sec !== s.lastBeep) { s.lastBeep = sec; return ['tick']; }
+  }
+  return [];
+}
+const sessTap = (s, now) => s.done ? [] : sessNext(s, now);
+function sessResume(s, now) {          // back from away: advance at most one step, starting it at `now`
+  if (s.done) return [];
+  const st = s.steps[s.i];
+  return s.alert || (st.dur && now >= s.end) ? sessNext(s, now) : [];
+}
+function sessPause(s, now) {
+  if (s.done || s.paused || s.alert) return;
+  s.paused = true; s.pausedLeft = s.end ? s.end - now : 0; s.pausedElapsed = now - s.stepStart;
+}
+function sessUnpause(s, now) {
+  if (!s.paused) return;
+  s.paused = false; if (s.end) s.end = now + s.pausedLeft; s.stepStart = now - s.pausedElapsed;
+}
+
 // ---------- navigation ----------
 const MENU_SCREENS = ['timer', 'workouts', 'history', 'settings'];
 let current = 'timer';

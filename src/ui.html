@@ -641,11 +641,27 @@ function openEditor(id) {
   renderEditor(); go('edit');
   if (draft.isNew) $('#wname').focus();
 }
+const isLinked = i => { const X = draft.exercises; return !!(TYPES[X[i].type] || TYPES.Standard).link && i < X.length - 1; };
+function exNote(i) {
+  const e = draft.exercises[i], t = TYPES[e.type] || TYPES.Standard;
+  return isLinked(i) ? `<div class="link-note">↳ ${esc(e.type.toLowerCase())}: runs back-to-back with #${i + 2}, using this exercise's rest between rounds</div>`
+                     : t.hint ? `<div class="hint">${esc(t.hint)}</div>` : '';
+}
+function renderTotal() {
+  const X = draft.exercises, est = buildSteps(draft).reduce((a, s) => a + (s.dur || 40), 0);
+  $('#wtotal').textContent = `${X.length} exercise${X.length === 1 ? '' : 's'} · ~${fmtLong(est)} · times as 90 or 1:30`;
+}
+// updates only the link state and note of row i; never touches the inputs, so focus survives
+function refreshExRow(i) {
+  const row = $(`#exlist .ex[data-i="${i}"]`); if (!row) return;
+  row.classList.toggle('linked', isLinked(i));
+  row.querySelector('.link-note, .hint')?.remove();
+  row.insertAdjacentHTML('beforeend', exNote(i));
+}
 function renderEditor() {
   const X = draft.exercises;
   $('#exlist').innerHTML = X.map((e, i) => {
-    const t = TYPES[e.type] || TYPES.Standard, linked = t.link && i < X.length - 1;
-    return `<div class="ex${linked ? ' linked' : ''}" data-i="${i}">
+    return `<div class="ex${isLinked(i) ? ' linked' : ''}" data-i="${i}">
       <div class="ex-top">
         <div class="ex-num">${i + 1}</div>
         <input data-f="name" value="${esc(e.name)}" placeholder="Exercise name">
@@ -663,20 +679,18 @@ function renderEditor() {
         <div class="field"><label>Rest after</label><input data-f="after" value="${fmtField(e.after)}" placeholder="0"></div>
         <div class="field wide"><label>Notes</label><input data-f="notes" value="${esc(e.notes)}" placeholder="Weight, cues, machine setting… (optional)"></div>
       </div>
-      ${linked ? `<div class="link-note">↳ ${esc(e.type.toLowerCase())}: runs back-to-back with #${i + 2}, using this exercise's rest between rounds</div>`
-               : t.hint ? `<div class="hint">${esc(t.hint)}</div>` : ''}
+      ${exNote(i)}
     </div>`;
   }).join('');
-  const est = buildSteps(draft).reduce((a, s) => a + (s.dur || 40), 0);
-  $('#wtotal').textContent = `${X.length} exercise${X.length === 1 ? '' : 's'} · ~${fmtLong(est)} · times as 90 or 1:30`;
+  renderTotal();
 }
 $('#exlist').addEventListener('change', e => {
   const f = e.target.dataset.f; if (!f) return;
   const i = +e.target.closest('.ex').dataset.i, x = draft.exercises[i];
-  if (f === 'sets') x.sets = Math.max(1, Math.min(20, parseInt(e.target.value) || 1));
-  else if (['work', 'rest', 'after'].includes(f)) x[f] = parseTime(e.target.value);
+  if (f === 'sets') e.target.value = x.sets = Math.max(1, Math.min(20, parseInt(e.target.value) || 1));
+  else if (['work', 'rest', 'after'].includes(f)) e.target.value = fmtField(x[f] = parseTime(e.target.value));
   else x[f] = e.target.value;
-  if (['type', 'sets', 'work', 'rest', 'after'].includes(f)) renderEditor();
+  if (['type', 'sets', 'work', 'rest', 'after'].includes(f)) { refreshExRow(i); renderTotal(); }
 });
 $('#exlist').addEventListener('input', e => { if (['name', 'reps', 'notes'].includes(e.target.dataset.f)) draft.exercises[+e.target.closest('.ex').dataset.i][e.target.dataset.f] = e.target.value; });
 $('#exlist').addEventListener('click', e => {

@@ -23,3 +23,17 @@ test('starting a workout with no exercises says so', async t => {
   assert.match(await page.textContent('#confirmMsg'), /no exercises/);
   assert.deepEqual(errors, []);
 });
+
+test('changing sets keeps focus on the next field', async t => {
+  const { browser, page, errors } = await openApp(); t.after(() => browser.close());
+  await page.evaluate(() => { go('workouts'); openEditor(null); });
+  await page.click('#addEx');
+  await page.fill('[data-i="0"] [data-f="sets"]', '5');
+  await page.press('[data-i="0"] [data-f="sets"]', 'Tab');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.f), 'reps');
+  assert.equal(await page.evaluate(() => draft.exercises[0].sets), 5);
+  await page.selectOption('[data-i="0"] [data-f="type"]', 'Superset');
+  assert.ok(await page.evaluate(() => document.querySelector('.ex[data-i="0"]').classList.contains('linked')));
+  assert.equal(await page.evaluate(() => document.activeElement.closest('.ex').dataset.i), '0');
+  assert.deepEqual(errors, []);
+});

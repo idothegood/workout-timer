@@ -79,3 +79,9 @@ test('formula guard', async () => {
   assert.equal(r.workouts[0].exercises[0].name, '=SUM(A1)');
   assert.equal(r.workouts[0].exercises[0].notes, '- slow');
 });
+
+test('inherited Object.prototype names are not valid types', async () => {
+  const r = await run(() => csvToWorkouts('workout,type\nA,constructor\nA,__proto__\n', []));
+  assert.deepEqual(r.workouts[0].exercises.map(e => e.type), ['Standard', 'Standard']);
+  assert.deepEqual(r.problems, ['row 2: unknown type "constructor", used Standard', 'row 3: unknown type "__proto__", used Standard']);
+});

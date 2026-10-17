@@ -1034,7 +1034,7 @@ function csvToWorkouts(text, takenNames) {
       else sets = n;
     }
     let type = txt('type') || 'Standard';
-    if (!TYPES[type]) { p(`unknown type "${type}", used Standard`); type = 'Standard'; }
+    if (!Object.hasOwn(TYPES, type)) { p(`unknown type "${type}", used Standard`); type = 'Standard'; }
     const t = (c, d) => get(c) ? parseTime(get(c)) : d;
     list.push(ex({ name: txt('exercise') || `Exercise ${list.length + 1}`, type, sets, reps: txt('reps'), work: t('set_time', 0), rest: t('rest', 60), after: t('rest_after', 120), notes: txt('notes') }));
   }

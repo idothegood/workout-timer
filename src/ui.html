@@ -697,7 +697,7 @@ $('#addEx').onclick = () => {
 $('#wname').oninput = e => draft.name = e.target.value;
 function commitDraft() {
   document.activeElement?.blur?.();                 // flush the field being typed in
-  draft.exercises = draft.exercises.filter(x => x.name.trim() || draft.exercises.length === 1);
+  draft.exercises.forEach((x, i) => { x.name = x.name.trim() || `Exercise ${i + 1}`; });
   const { isNew, ...w } = draft; w.name = w.name.trim() || 'Untitled workout';
   const i = state.workouts.findIndex(x => x.id === w.id);
   if (i >= 0) state.workouts[i] = w; else state.workouts.push(w);
@@ -715,7 +715,7 @@ $('#delW').onclick = () => {
 // ---------- building a workout's timeline ----------
 // Groups consecutive exercises joined by Superset/Giant set, then walks round by round.
 function buildSteps(w) {
-  const X = w.exercises.filter(x => x.name.trim() || w.exercises.length === 1);
+  const X = w.exercises;
   const groups = []; let g = [];
   X.forEach((x, i) => { g.push(x); if (!(TYPES[x.type]?.link && i < X.length - 1)) { groups.push(g); g = []; } });
   const steps = S().ready ? [{ kind: 'ready', dur: S().ready }] : [];
@@ -734,7 +734,8 @@ function buildSteps(w) {
 // ---------- RUN (guided workout) ----------
 let run = null;
 function startRun(w) {
-  if (!w || !w.exercises.length) return;
+  if (!w) return;
+  if (!w.exercises.length) return ask('This workout has no exercises yet. Add one in the editor.', 'OK', null);
   run = { w, steps: buildSteps(w), i: 0, started: Date.now(), paused: false };
   go('run'); $('#runName').textContent = w.name;
   unlockAudio(); enterStep(0);

@@ -12,6 +12,12 @@ Rest timer and workout runner: set counter, rest countdowns, saved workouts with
 - `src/build_web.py`: builds the web app into `docs/` (served by GitHub Pages)
 - `src/make_icon.py`: draws all icons
 
+## Tests
+Playwright tests drive `src/ui.html` in headless Chromium (needs `npm i -g playwright`):
+```
+NODE_PATH=$(npm root -g) node --test "tests/*.test.js"
+```
+
 ## Update the web app
 ```
 python src/make_icon.py   # only if the icon changed

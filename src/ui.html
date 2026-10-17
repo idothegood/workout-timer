@@ -930,10 +930,11 @@ function runDraw() {
 
 // One clock for both timers. setInterval (not requestAnimationFrame) so rests still end and beep
 // while the window is minimized or behind other windows. The quick timer keeps running while you browse menus.
+// While hidden, a session in alert is left alone: nobody sees the hold end, so onVisible() starts the next set on return.
+const idle = ss => document.visibilityState === 'hidden' && ss.alert;
 setInterval(() => {
-  if (document.visibilityState === 'hidden') return;   // onVisible() catches up on return
-  if (run) runEvents(sessTick(run.sess, Date.now(), S().hold));
-  if (qt.sess && !qt.sess.done) qEvents(sessTick(qt.sess, Date.now(), S().hold));
+  if (run && !idle(run.sess)) runEvents(sessTick(run.sess, Date.now(), S().hold));
+  if (qt.sess && !qt.sess.done) { if (!idle(qt.sess)) qEvents(sessTick(qt.sess, Date.now(), S().hold)); }
   else if (current === 'timer') qDraw();
 }, 100);
 

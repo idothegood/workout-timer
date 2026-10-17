@@ -42,10 +42,27 @@ test('return after a long rest lands on next set without alert', async t => {
   await page.click('#qMain'); await page.click('#qMain'); await page.clock.runFor(100);   // set 1 done: rest
   assert.match(await page.evaluate(() => $('#timer').className), /p-rest/);
   await setVis(page, 'hidden');
-  await page.clock.setSystemTime(Date.now() + 180000);
+  await page.clock.setSystemTime(await page.evaluate(() => Date.now()) + 180000);
   await setVis(page, 'visible');
   assert.equal(await page.textContent('#qSet'), '2');
   const c = await page.evaluate(() => $('#timer').className);
   assert.match(c, /p-work/); assert.doesNotMatch(c, /alert/);
+  assert.deepEqual(errors, []);
+});
+
+test('hidden: rest-end alert still fires, but the next set waits for return', async t => {
+  const { page, errors } = await open(t);
+  await page.click('#qMain'); await page.click('#qMain'); await page.clock.runFor(100);   // rest
+  await page.evaluate(() => { window.__beeps = 0; const b = beep; beep = (...a) => { window.__beeps++; return b(...a); }; });
+  await setVis(page, 'hidden');
+  await page.clock.runFor(10000);
+  assert.equal(await page.evaluate(() => qt.sess.alert), true);
+  assert.ok(await page.evaluate(() => window.__beeps) >= 1);
+  await page.clock.runFor(5000);
+  assert.equal(await page.evaluate(() => qt.sess.alert), true);
+  assert.equal(await page.textContent('#qSet'), '1');
+  await setVis(page, 'visible');
+  assert.equal(await page.textContent('#qSet'), '2');
+  assert.match(await page.evaluate(() => $('#timer').className), /p-work/);
   assert.deepEqual(errors, []);
 });

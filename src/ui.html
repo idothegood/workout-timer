@@ -252,7 +252,7 @@
     </div>
     <div class="rest-label">Rest time</div>
     <div class="presets" id="presets"></div>
-    <div class="keys">SPACE = set done / skip rest &nbsp;·&nbsp; 1-3 = preset &nbsp;·&nbsp; Esc = stop</div>
+    <div class="keys">SPACE = start / set done / skip &nbsp;·&nbsp; 1-3 = preset &nbsp;·&nbsp; Esc = stop</div>
   </div>
 </section>
 
@@ -542,7 +542,7 @@ function setPhase(screen, p, paused) {      // keeps `alerting` only while the a
 }
 function flash(screen) { const el = $('#' + screen + ' .stage'); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
 // Sounds and effects for a session's events; the caller handles 'finish'.
-const sessOn = screen => screen === 'run' ? run?.sess : null;
+const sessOn = screen => screen === 'run' ? run?.sess : screen === 'timer' ? qt.sess : null;
 function handleEvents(screen, events) {
   const s = sessOn(screen);
   events.forEach(e => {
@@ -555,8 +555,10 @@ function handleEvents(screen, events) {
 }
 
 // ---------- QUICK TIMER (home) ----------
-// phase: idle (before the first set) -> work (counting up) -> rest (counting down) -> work ...
-const qt = { phase: 'idle', set: 1, rest: 90, end: 0, start: 0, lastBeep: null };
+// idle (qt.sess null) -> work 1 (counting up) -> rest -> alert -> work 2 ... -> done; driven by the session engine
+const qt = { rest: 90, sess: null, finished: 0 };
+const stepsQuick = (sets, rest) => Array.from({ length: sets * 2 - 1 }, (_, k) =>
+  k % 2 ? { kind: 'rest', dur: rest } : { kind: 'work', ex: null, set: k / 2 + 1, of: sets, dur: 0 });
 function renderPresets() {
   const P = S().presets;
   $('#presets').innerHTML = P.map((s, i) => `<button class="chip${s === qt.rest ? ' on' : ''}" data-preset="${i}">${fmtChip(s)}</button>`).join('') +
@@ -564,7 +566,11 @@ function renderPresets() {
 }
 function setQRest(s) {
   qt.rest = s; S().rest = s; persist(); renderPresets();
-  if (qt.phase === 'rest') { qt.end = qt.restStart + s * 1000; }
+  const ss = qt.sess;
+  if (ss) {
+    ss.steps.forEach(st => { if (st.kind === 'rest') st.dur = s; });
+    if (ss.steps[ss.i]?.kind === 'rest' && !ss.alert) ss.end = ss.stepStart + s * 1000;
+  }
   qDraw();
 }
 $('#presets').addEventListener('click', e => {
@@ -572,21 +578,26 @@ $('#presets').addEventListener('click', e => {
   if (b.id === 'customChip') openSheet(); else setQRest(S().presets[+b.dataset.preset]);
 });
 const qTotal = () => S().qSets;   // sets per exercise on the quick timer
-function qMain() {
-  unlockAudio();
-  if (qt.phase === 'done') return qStop();                                                          // start over
-  if (qt.phase === 'idle') qt.started = Date.now();
-  if (qt.phase === 'rest') { qt.phase = 'work'; qt.set++; qt.start = Date.now(); flash('timer'); } // skip rest
-  else if (qt.set >= qTotal()) {                                                                    // last set done: stop here
-    qt.phase = 'done'; qt.finished = Date.now(); beep([0, .18, .36, .6], 990, .25); flash('timer');
-  }
-  else { qt.phase = 'rest'; qt.restStart = Date.now(); qt.end = qt.restStart + qt.rest * 1000; qt.lastBeep = null; } // set done
+function qEvents(e) {
+  handleEvents('timer', e);
+  if (e.includes('finish')) { qt.finished = Date.now(); beep([0, .18, .36, .6], 990, .25); flash('timer'); }
   qDraw();
 }
-function qStop() { qt.phase = 'idle'; qt.set = 1; qDraw(); }
+function qMain() {
+  unlockAudio();
+  if (qt.sess?.done) return qStop();                                                          // start over
+  if (!qt.sess) { qt.sess = newSession(stepsQuick(qTotal(), qt.rest), Date.now()); return qEvents(['enter']); }
+  qEvents(sessTap(qt.sess, Date.now()));                                                      // set done / skip rest
+}
+function qStop() { qt.sess = null; qDraw(); }
 function qChangeSets(d) {
   S().qSets = Math.max(1, Math.min(20, qTotal() + d)); persist();
-  if (qt.set > qTotal()) qt.set = qTotal();
+  const ss = qt.sess;
+  if (ss && !ss.done) {             // same index layout for any set count: keep i
+    ss.steps = stepsQuick(qTotal(), qt.rest);
+    const last = ss.steps.length - 1;
+    if (ss.i > last) sessEnter(ss, last, Date.now());
+  }
   qDraw();
 }
 $('#qMain').onclick = qMain;
@@ -595,41 +606,40 @@ $('#qStop').onclick = qStop;
 $('#qLess').onclick = () => qChangeSets(-1);
 $('#qMore').onclick = () => qChangeSets(1);
 $('#qAdjust').addEventListener('click', e => {
-  const a = +e.target.dataset.adj; if (!a || qt.phase !== 'rest') return;
-  qt.end = Math.max(Date.now() + 1000, qt.end + a * 1000);
+  const a = +e.target.dataset.adj, ss = qt.sess; if (!a || !ss || ss.alert || ss.steps[ss.i]?.kind !== 'rest') return;
+  ss.end = Math.max(Date.now() + 1000, ss.end + a * 1000);
 });
 function qDraw() {
-  const now = Date.now();
-  if (qt.phase === 'rest') {
-    const left = qt.end - now, total = qt.end - qt.restStart;
-    if (left <= 0) {                    // rest over: next set starts
-      qt.phase = 'work'; qt.set++; qt.start = now; beep([0, .22], 990, .3); flash('timer');
-      return qDraw();
-    }
-    const sec = Math.ceil(left / 1000);
-    if (sec <= 3 && qt.lastBeep !== sec) { qt.lastBeep = sec; tick(); }
-    setPhase('timer', 'rest');
-    draw('timer', { phase: 'Rest', clock: fmtTime(sec), sub: qt.set + 1 === qTotal() ? 'next: last set' : `next: set ${qt.set + 1}`, frac: left / total });
-    $('#qMain').textContent = 'Skip rest ⏭';
-  } else if (qt.phase === 'done') {
+  const now = Date.now(), ss = qt.sess, s = ss?.steps[ss.i];
+  const rest = s?.kind === 'rest', set = !ss ? 1 : ss.done ? qTotal() : rest ? ss.steps[ss.i - 1].set : s.set;
+  const nextSub = () => set + 1 === qTotal() ? 'next: last set' : `next: set ${set + 1}`;
+  if (!ss) {
+    setPhase('timer', 'idle');
+    draw('timer', { phase: 'Ready', clock: 'GO', sub: 'tap to start set 1', frac: 1 });
+    $('#qMain').textContent = 'Start ▶';
+  } else if (ss.done) {
     setPhase('timer', 'work');
-    draw('timer', { phase: 'Done', clock: '✓', sub: `${qTotal()} sets · ${fmtLong((qt.finished - qt.started) / 1000)}`, frac: 1 });
+    draw('timer', { phase: 'Done', clock: '✓', sub: `${qTotal()} sets · ${fmtLong((qt.finished - ss.started) / 1000)}`, frac: 1 });
     $('#qMain').textContent = 'Start over ↺';
+  } else if (ss.alert) {            // time's up: hold, then the engine enters the next set
+    setPhase('timer', 'alert');
+    draw('timer', { phase: "Time's up", clock: 'GO', sub: nextSub(), frac: 0 });
+    $('#qMain').textContent = 'Start now ⏭';
+  } else if (rest) {
+    const left = ss.end - now;
+    setPhase('timer', 'rest');
+    draw('timer', { phase: 'Rest', clock: fmtTime(Math.ceil(left / 1000)), sub: nextSub(), frac: left / (ss.end - ss.stepStart) });
+    $('#qMain').textContent = 'Skip rest ⏭';
   } else {
-    const last = qt.set >= qTotal(), label = last ? 'Last set done ✓' : `Set done · rest ${fmtTime(qt.rest)}`;
-    if (qt.phase === 'work') {
-      setPhase('timer', 'work');
-      draw('timer', { phase: last ? 'Last set' : 'Working', clock: fmtClock((now - qt.start) / 1000), sub: 'tap when the set is done', frac: 1 });
-    } else {
-      setPhase('timer', 'idle');
-      draw('timer', { phase: 'Ready', clock: 'GO', sub: 'tap when the set is done', frac: 1 });
-    }
-    $('#qMain').textContent = label;
+    const last = s.set >= s.of;
+    setPhase('timer', 'work');
+    draw('timer', { phase: last ? 'Last set' : 'Working', clock: fmtClock((now - ss.stepStart) / 1000), sub: 'tap when the set is done', frac: 1 });
+    $('#qMain').textContent = last ? 'Last set done ✓' : `Set done · rest ${fmtTime(qt.rest)}`;
   }
-  $('#qSet').textContent = qt.set;
+  $('#qSet').textContent = set;
   $('#qOf').textContent = qTotal();
-  $('#qAdjust').style.visibility = qt.phase === 'rest' ? 'visible' : 'hidden';
-  $('#qStop').style.visibility = qt.phase === 'idle' ? 'hidden' : 'visible';
+  $('#qAdjust').style.visibility = rest && !ss.alert ? 'visible' : 'hidden';
+  $('#qStop').style.visibility = ss ? 'visible' : 'hidden';
 }
 
 // ---------- custom time sheet ----------
@@ -921,7 +931,8 @@ function runDraw() {
 // while the window is minimized or behind other windows. The quick timer keeps running while you browse menus.
 setInterval(() => {
   if (run) runEvents(sessTick(run.sess, Date.now(), S().hold));
-  if (qt.phase === 'rest' || current === 'timer') qDraw();
+  if (qt.sess && !qt.sess.done) qEvents(sessTick(qt.sess, Date.now(), S().hold));
+  else if (current === 'timer') qDraw();
 }, 100);
 
 // ---------- HISTORY ----------
@@ -981,7 +992,7 @@ $('#restoreBtn').onclick = async () => {
 let wake = null, wakeBusy = false;
 async function updateWake() {
   if (!('wakeLock' in navigator) || wakeBusy) return;
-  const want = !!run || (qt.phase !== 'idle' && qt.phase !== 'done');
+  const want = !!run || !!(qt.sess && !qt.sess.done);
   wakeBusy = true;
   try {
     if (want && !wake && document.visibilityState === 'visible') {

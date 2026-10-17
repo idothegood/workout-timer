@@ -69,7 +69,7 @@ class Api:
                                                      file_types=('CSV (*.csv)',))
         if not path:
             return False
-        Path(path if isinstance(path, str) else path[0]).write_text(text, encoding='utf-8')
+        Path(path if isinstance(path, str) else path[0]).write_bytes(text.encode('utf-8'))  # bytes: text mode would turn \r\n into \r\r\n
         return True
 
     def import_csv(self):
